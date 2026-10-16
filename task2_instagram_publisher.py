@@ -126,7 +126,18 @@ if len(set(queue)) != len(queue):
 
 state = load_json(STATE_PATH, {"last_slot": None, "next_index": 0, "posted": []})
 if state.get("last_slot") == slot_id:
-    print(f"TASK 2 PASS: slot {slot_id} already posted; duplicate suppressed.")
+    matches = [x for x in state.get("posted", []) if x.get("slot") == slot_id]
+    if not matches:
+        fail(f"state claims slot {slot_id} posted but no receipt exists")
+    receipt = matches[-1]
+    required = ("filename", "media_id", "permalink", "timestamp", "username")
+    missing = [k for k in required if not str(receipt.get(k, "")).strip()]
+    if missing:
+        fail("stored receipt is incomplete: " + ", ".join(missing))
+    if str(receipt.get("username", "")).lower() != EXPECTED_USERNAME:
+        fail(f"stored receipt username mismatch: {receipt.get('username')}")
+    print(f"TASK 2 PASS: slot {slot_id} already has a verified Instagram receipt; duplicate suppressed.")
+    print(json.dumps(receipt, indent=2))
     raise SystemExit(0)
 
 index = int(state.get("next_index", 0)) % len(queue)
