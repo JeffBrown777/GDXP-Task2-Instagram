@@ -1,0 +1,68 @@
+name: GDXP Task 2 Instagram
+
+on:
+  schedule:
+    - cron: "0 16 * * *"
+    - cron: "0 22 * * *"
+  workflow_dispatch:
+  push:
+    paths:
+      - "task2-trigger.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gdxp-task2-instagram
+  cancel-in-progress: false
+
+jobs:
+  task2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Reconstruct approved PNG assets if needed
+        run: python bootstrap_assets.py
+
+      - name: Publish reconstructed assets to raw GitHub if newly created
+        run: |
+          if git status --porcelain -- png/ | grep -q .; then
+            git config user.name "gdxp-task2"
+            git config user.email "gdxp-task2@users.noreply.github.com"
+            git add png/
+            git commit -m "Materialize approved Task 2 PNG assets"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+            sleep 15
+          fi
+
+      - name: Publish next approved PNG
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_IMAGE_BASE_URL: https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/main/png
+          IG_API_VERSION: v24.0
+          IG_GRAPH_HOST: https://graph.facebook.com
+        run: python task2_instagram_publisher.py
+
+      - name: Commit verified Task 2 receipt state
+        run: |
+          if git diff --quiet -- state.json; then
+            exit 0
+          fi
+          git config user.name "gdxp-task2"
+          git config user.email "gdxp-task2@users.noreply.github.com"
+          git add state.json
+          git commit -m "Task 2 Instagram receipt state"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
