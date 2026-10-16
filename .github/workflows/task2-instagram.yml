@@ -54,12 +54,29 @@ jobs:
             echo "TASK2_SLOT=09" >> "$GITHUB_ENV"
           elif grep -Eqi '(3PM|15|3:00)' task2-trigger.txt 2>/dev/null; then
             echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
+          else
+            echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
+          fi
+
+      - name: Credential preflight
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          if [ -n "$IG_ACCESS_TOKEN" ]; then
+            echo "TASK2_AUTH_READY=true" >> "$GITHUB_ENV"
+            echo "TASK 2 AUTH READY"
+          else
+            echo "TASK2_AUTH_READY=false" >> "$GITHUB_ENV"
+            echo "TASK 2 AUTH NOT READY"
           fi
 
       - name: Reconstruct approved PNG assets if needed
+        if: env.TASK2_AUTH_READY == 'true'
         run: python bootstrap_assets.py
 
       - name: Publish reconstructed assets to raw GitHub if newly created
+        if: env.TASK2_AUTH_READY == 'true'
         run: |
           if git status --porcelain -- png/ | grep -q .; then
             git config user.name "gdxp-task2"
@@ -72,6 +89,7 @@ jobs:
           fi
 
       - name: Publish next approved PNG
+        if: env.TASK2_AUTH_READY == 'true'
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           IG_IMAGE_BASE_URL: https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/main/png
@@ -82,6 +100,7 @@ jobs:
         run: python task2_instagram_publisher.py
 
       - name: Commit verified Task 2 receipt state
+        if: env.TASK2_AUTH_READY == 'true'
         run: |
           if git diff --quiet -- state.json; then
             exit 0
@@ -92,3 +111,12 @@ jobs:
           git commit -m "Task 2 Instagram receipt state"
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Task 2 close state
+        shell: bash
+        run: |
+          if [ "$TASK2_AUTH_READY" = "true" ]; then
+            echo "TASK 2 EXECUTION PATH COMPLETED"
+          else
+            echo "TASK 2 EXECUTION PATH PRESERVED; PUBLISH STEP NOT ENTERED"
+          fi
