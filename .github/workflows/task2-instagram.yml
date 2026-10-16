@@ -1,0 +1,55 @@
+name: GDXP Task 2 Instagram
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+      timezone: "America/Phoenix"
+    - cron: "0 15 * * *"
+      timezone: "America/Phoenix"
+  workflow_dispatch:
+  push:
+    paths:
+      - "task2-trigger.txt"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gdxp-task2-instagram
+  cancel-in-progress: false
+
+jobs:
+  task2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Publish next approved PNG
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_IMAGE_BASE_URL: ${{ vars.IG_IMAGE_BASE_URL }}
+          IG_API_VERSION: ${{ vars.IG_API_VERSION }}
+          IG_GRAPH_HOST: ${{ vars.IG_GRAPH_HOST }}
+        run: python task2_instagram_publisher.py
+
+      - name: Commit verified Task 2 receipt state
+        run: |
+          if git diff --quiet -- state.json; then
+            exit 0
+          fi
+          git config user.name "gdxp-task2"
+          git config user.email "gdxp-task2@users.noreply.github.com"
+          git add state.json
+          git commit -m "Task 2 Instagram receipt state"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
