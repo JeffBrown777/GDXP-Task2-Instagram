@@ -21,9 +21,12 @@ def required_env(name):
 
 API_VERSION = os.getenv("IG_API_VERSION", "v24.0").strip() or "v24.0"
 GRAPH_HOST = (os.getenv("IG_GRAPH_HOST", "https://graph.facebook.com").strip() or "https://graph.facebook.com").rstrip("/")
-IG_USER_ID = required_env("IG_USER_ID")
-ACCESS_TOKEN = required_env("IG_ACCESS_TOKEN")
-IMAGE_BASE_URL = required_env("IG_IMAGE_BASE_URL").rstrip("/")
+missing = [name for name in ("IG_USER_ID","IG_ACCESS_TOKEN","IG_IMAGE_BASE_URL") if not os.getenv(name, "").strip()]
+if missing:
+    fail("missing required environment values: " + ", ".join(missing))
+IG_USER_ID = os.getenv("IG_USER_ID").strip()
+ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN").strip()
+IMAGE_BASE_URL = os.getenv("IG_IMAGE_BASE_URL").strip().rstrip("/")
 
 def api_post(path, data):
     url = f"{GRAPH_HOST}/{API_VERSION}/{path.lstrip('/')}"
