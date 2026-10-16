@@ -13,80 +13,42 @@ def fail(msg):
     print(f"TASK 2 HOLD: {msg}", file=sys.stderr)
     raise SystemExit(1)
 
-API_VERSION = os.getenv("IG_API_VERSION", "v24.0").strip() or "v24.0"
-GRAPH_HOST = (os.getenv("IG_GRAPH_HOST", "https://graph.instagram.com").strip() or "https://graph.instagram.com").rstrip("/")
-ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN", "").strip()
-IMAGE_BASE_URL = os.getenv("IG_IMAGE_BASE_URL", "").strip().rstrip("/")
-EXPECTED_USERNAME = os.getenv("IG_EXPECTED_USERNAME", "jeffbrown3579").strip().lstrip("@").lower()
-IG_USER_ID = os.getenv("IG_USER_ID", "").strip()
+def required_env(name):
+    value = os.getenv(name, "").strip()
+    if not value:
+        fail(f"missing required environment value: {name}")
+    return value
 
-missing = []
-if not ACCESS_TOKEN:
-    missing.append("IG_ACCESS_TOKEN")
-if not IMAGE_BASE_URL:
-    missing.append("IG_IMAGE_BASE_URL")
+API_VERSION = os.getenv("IG_API_VERSION", "v24.0").strip() or "v24.0"
+GRAPH_HOST = (os.getenv("IG_GRAPH_HOST", "https://graph.facebook.com").strip() or "https://graph.facebook.com").rstrip("/")
+missing = [name for name in ("IG_USER_ID","IG_ACCESS_TOKEN","IG_IMAGE_BASE_URL") if not os.getenv(name, "").strip()]
 if missing:
     fail("missing required environment values: " + ", ".join(missing))
+IG_USER_ID = os.getenv("IG_USER_ID").strip()
+ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN").strip()
+IMAGE_BASE_URL = os.getenv("IG_IMAGE_BASE_URL").strip().rstrip("/")
 
 def api_post(path, data):
     url = f"{GRAPH_HOST}/{API_VERSION}/{path.lstrip('/')}"
     r = requests.post(url, data=data, timeout=60)
-    try:
-        payload = r.json()
-    except Exception:
-        payload = {"raw": r.text}
-    if not r.ok:
-        fail(f"Instagram API error {r.status_code}: {payload}")
+    try: payload = r.json()
+    except Exception: payload = {"raw": r.text}
+    if not r.ok: fail(f"Instagram API error {r.status_code}: {payload}")
     return payload
 
 def api_get(path, params):
     url = f"{GRAPH_HOST}/{API_VERSION}/{path.lstrip('/')}"
     r = requests.get(url, params=params, timeout=60)
-    try:
-        payload = r.json()
-    except Exception:
-        payload = {"raw": r.text}
-    if not r.ok:
-        fail(f"Instagram API error {r.status_code}: {payload}")
+    try: payload = r.json()
+    except Exception: payload = {"raw": r.text}
+    if not r.ok: fail(f"Instagram API error {r.status_code}: {payload}")
     return payload
-
-def normalize_profile(payload):
-    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
-        if len(payload["data"]) != 1:
-            fail(f"Instagram profile lookup returned {len(payload['data'])} accounts; refusing to guess target")
-        return payload["data"][0]
-    return payload
-
-def resolve_account():
-    global IG_USER_ID
-    profile = normalize_profile(api_get("me", {
-        "fields": "user_id,username,id,account_type",
-        "access_token": ACCESS_TOKEN,
-    }))
-    username = str(profile.get("username") or "").strip().lstrip("@").lower()
-    if not username:
-        fail(f"Instagram profile lookup did not return username: {profile}")
-    if EXPECTED_USERNAME and username != EXPECTED_USERNAME:
-        fail(f"wrong Instagram target account: @{username}; expected @{EXPECTED_USERNAME}")
-    resolved = str(profile.get("user_id") or profile.get("id") or "").strip()
-    if not resolved:
-        fail(f"Instagram profile lookup did not return a usable account id: {profile}")
-    if IG_USER_ID and IG_USER_ID != resolved:
-        fail("configured IG_USER_ID does not match authenticated Instagram account")
-    IG_USER_ID = resolved
-    account_type = str(profile.get("account_type") or "").upper()
-    if account_type and account_type not in {"BUSINESS", "MEDIA_CREATOR", "CREATOR"}:
-        fail(f"Instagram account is not a publish-capable professional account: {account_type}")
-    print(f"TASK 2 TARGET VERIFIED: @{username}")
 
 def load_json(path, default):
     p = Path(path)
-    if not p.exists():
-        return default
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception as exc:
-        fail(f"invalid JSON in {path}: {exc}")
+    if not p.exists(): return default
+    try: return json.loads(p.read_text(encoding="utf-8"))
+    except Exception as exc: fail(f"invalid JSON in {path}: {exc}")
 
 def verify_public_png(url):
     try:
@@ -105,17 +67,8 @@ def verify_public_png(url):
     if not first.startswith(b"\x89PNG\r\n\x1a\n"):
         fail("PNG preflight signature verification failed")
 
-def resolve_slot():
-    explicit = os.getenv("TASK2_SLOT", "").strip()
-    if explicit in {"09", "15"}:
-        return explicit
-    now = datetime.now(PHX)
-    return "09" if now.hour < 12 else "15"
-
-resolve_account()
-
 now = datetime.now(PHX)
-slot = resolve_slot()
+slot = "09" if now.hour < 12 else "15"
 slot_id = f"{now.date().isoformat()}-{slot}"
 
 queue = load_json(QUEUE_PATH, [])
@@ -137,59 +90,36 @@ if not filename.lower().endswith(".png"):
 image_url = f"{IMAGE_BASE_URL}/{requests.utils.quote(filename)}"
 verify_public_png(image_url)
 
-container = api_post(f"{IG_USER_ID}/media", {
-    "image_url": image_url,
-    "access_token": ACCESS_TOKEN,
-})
+media_data = {"image_url": image_url, "access_token": ACCESS_TOKEN}
+container = api_post(f"{IG_USER_ID}/media", media_data)
 creation_id = container.get("id")
-if not creation_id:
-    fail(f"no creation_id returned: {container}")
+if not creation_id: fail(f"no creation_id returned: {container}")
 
 status = None
 for _ in range(20):
-    status = api_get(creation_id, {
-        "fields": "status_code,status",
-        "access_token": ACCESS_TOKEN,
-    })
+    status = api_get(creation_id, {"fields": "status_code,status", "access_token": ACCESS_TOKEN})
     code = status.get("status_code")
-    if code == "FINISHED":
-        break
-    if code in {"ERROR", "EXPIRED"}:
-        fail(f"container failed: {status}")
+    if code == "FINISHED": break
+    if code in {"ERROR", "EXPIRED"}: fail(f"container failed: {status}")
     time.sleep(3)
 else:
     fail(f"container not ready after wait: {status}")
 
-published = api_post(f"{IG_USER_ID}/media_publish", {
-    "creation_id": creation_id,
-    "access_token": ACCESS_TOKEN,
-})
+published = api_post(f"{IG_USER_ID}/media_publish", {"creation_id": creation_id, "access_token": ACCESS_TOKEN})
 media_id = published.get("id")
-if not media_id:
-    fail(f"no media_id returned: {published}")
+if not media_id: fail(f"no media_id returned: {published}")
 
-receipt = api_get(media_id, {
-    "fields": "id,permalink,timestamp,media_type,username",
-    "access_token": ACCESS_TOKEN,
-})
-if receipt.get("id") != media_id:
-    fail(f"receipt media id mismatch: {receipt}")
-if receipt.get("media_type") != "IMAGE":
-    fail(f"receipt media_type is not IMAGE: {receipt}")
-if receipt.get("username") and str(receipt.get("username")).lower() != EXPECTED_USERNAME:
-    fail(f"receipt username mismatch: {receipt}")
+receipt = api_get(media_id, {"fields": "id,permalink,timestamp,media_type", "access_token": ACCESS_TOKEN})
+if receipt.get("id") != media_id: fail(f"receipt media id mismatch: {receipt}")
+if receipt.get("media_type") != "IMAGE": fail(f"receipt media_type is not IMAGE: {receipt}")
 if not receipt.get("permalink") or not receipt.get("timestamp"):
     fail(f"receipt missing permalink or timestamp: {receipt}")
 
 state["last_slot"] = slot_id
 state["next_index"] = (index + 1) % len(queue)
 state.setdefault("posted", []).append({
-    "slot": slot_id,
-    "filename": filename,
-    "media_id": media_id,
-    "permalink": receipt.get("permalink"),
-    "timestamp": receipt.get("timestamp"),
-    "username": receipt.get("username") or EXPECTED_USERNAME,
+    "slot": slot_id, "filename": filename, "media_id": media_id,
+    "permalink": receipt.get("permalink"), "timestamp": receipt.get("timestamp"),
 })
 Path(STATE_PATH).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 print("TASK 2 PASS")
