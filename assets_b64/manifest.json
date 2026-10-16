@@ -1,0 +1,12 @@
+[
+  {
+    "dir": "u1",
+    "filename": "One Universe, Ever Expanding.png",
+    "chunks": ["chunk000.txt","chunk001.txt","chunk002.txt","chunk003.txt","chunk004.txt","chunk005.txt","chunk006.txt","chunk007.txt","chunk008.txt","chunk009.txt","chunk010.txt","chunk011.txt","chunk012.txt","chunk013.txt","chunk014.txt","chunk015.txt","chunk016.txt"]
+  },
+  {
+    "dir": "u2",
+    "filename": "One Universe, Expanding Forever.png",
+    "chunks": ["chunk000.txt","chunk001.txt","chunk002.txt","chunk003.txt","chunk004.txt","chunk005.txt","chunk006.txt","chunk007.txt","chunk008.txt","chunk009.txt","chunk010.txt","chunk011.txt","chunk012.txt","chunk013.txt","chunk014.txt","chunk015.txt"]
+  }
+]
