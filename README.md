@@ -1,40 +1,48 @@
-GDXP TASK 2 - FREE INSTAGRAM AUTOMATION - CORRECTED
+GDXP TASK 2 - FREE INSTAGRAM AUTOMATION - DIRECT INSTAGRAM LOGIN CORRECTION
 
 PURPOSE
 - No paid social-media scheduler.
 - One approved PNG at 9:00 AM PHX.
 - One approved PNG at 3:00 PM PHX.
 - No invented caption.
-- Duplicate suppression by slot.
-- Instagram media ID/permalink receipt recorded only after verified publication.
+- Duplicate suppression by exact PHX lane.
+- Instagram media ID/permalink/timestamp receipt recorded only after verified publication.
 
 FREE ROUTE
-Meta/Instagram publishing API + GitHub Actions.
+Instagram API with Instagram Login + GitHub Actions.
 
 TARGET
-Instagram: jeffbrown 3579
+Instagram: jeffbrown3579
 
 REPOSITORY
 JeffBrown777/GDXP-Task2-Instagram
 
-CURRENT REQUIREMENTS
-1. Instagram target must be a Professional account (Business or Creator) with content-publishing permission.
-2. A Meta app/token must authorize content publishing.
-3. GitHub repository holds this workflow and the approved PNG posting queue.
-4. The PNG URLs must be reachable by Meta over HTTPS.
-5. Secrets are stored in GitHub Actions secrets, never in source files.
+CORRECTED AUTHORIZATION PATH
+1. Target account must be an Instagram Professional account (Business or Creator).
+2. Use Instagram Login, not the Facebook-Page traversal path.
+3. Required Instagram permission scopes:
+   instagram_business_basic
+   instagram_business_content_publish
+4. The Instagram access token is stored only as the GitHub Actions secret IG_ACCESS_TOKEN.
+5. The publisher resolves the authenticated Instagram account ID at runtime and verifies the authenticated username is exactly jeffbrown3579 before any publish action.
+6. Wrong account, missing token, duplicate lane, unverified PNG, API error, or missing receipt = HOLD.
+7. Publication PASS requires media ID + permalink + timestamp + IMAGE receipt.
 
-REPOSITORY SECRETS
-IG_USER_ID
+REPOSITORY SECRET
 IG_ACCESS_TOKEN
 
-REPOSITORY VARIABLES
+NO LONGER REQUIRED
+IG_USER_ID is not required as a GitHub secret; the authenticated account ID is resolved from Instagram at runtime.
+
+NON-SECRET EXECUTION VALUES
 IG_IMAGE_BASE_URL
   https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/main/png
 IG_API_VERSION
   v24.0
 IG_GRAPH_HOST
-  https://graph.facebook.com
+  https://graph.instagram.com
+IG_EXPECTED_USERNAME
+  jeffbrown3579
 
 GDXP TASK 2
 9:00 AM PHX -> one PNG
