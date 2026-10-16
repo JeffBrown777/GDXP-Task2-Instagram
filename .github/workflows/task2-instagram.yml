@@ -58,25 +58,21 @@ jobs:
             echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
           fi
 
-      - name: Credential preflight
+      - name: Instagram authorization gate
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
         shell: bash
         run: |
-          if [ -n "$IG_ACCESS_TOKEN" ]; then
-            echo "TASK2_AUTH_READY=true" >> "$GITHUB_ENV"
-            echo "TASK 2 AUTH READY"
-          else
-            echo "TASK2_AUTH_READY=false" >> "$GITHUB_ENV"
-            echo "TASK 2 AUTH NOT READY"
+          if [ -z "$IG_ACCESS_TOKEN" ]; then
+            echo "::error::TASK 2 HOLD — IG_ACCESS_TOKEN is absent. Publication was not attempted."
+            exit 1
           fi
+          echo "TASK 2 AUTH READY"
 
       - name: Reconstruct approved PNG assets if needed
-        if: env.TASK2_AUTH_READY == 'true'
         run: python bootstrap_assets.py
 
       - name: Publish reconstructed assets to raw GitHub if newly created
-        if: env.TASK2_AUTH_READY == 'true'
         run: |
           if git status --porcelain -- png/ | grep -q .; then
             git config user.name "gdxp-task2"
@@ -89,7 +85,6 @@ jobs:
           fi
 
       - name: Publish next approved PNG
-        if: env.TASK2_AUTH_READY == 'true'
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           IG_IMAGE_BASE_URL: https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/main/png
@@ -99,8 +94,41 @@ jobs:
           TASK2_SLOT: ${{ env.TASK2_SLOT }}
         run: python task2_instagram_publisher.py
 
+      - name: Verify Instagram publication receipt
+        env:
+          TASK2_SLOT: ${{ env.TASK2_SLOT }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          slot = os.environ["TASK2_SLOT"]
+          today = datetime.now(ZoneInfo("America/Phoenix")).date().isoformat()
+          slot_id = f"{today}-{slot}"
+
+          with open("state.json", "r", encoding="utf-8") as f:
+              state = json.load(f)
+
+          matches = [x for x in state.get("posted", []) if x.get("slot") == slot_id]
+          if not matches:
+              raise SystemExit(f"TASK 2 HOLD — no Instagram receipt recorded for {slot_id}")
+
+          receipt = matches[-1]
+          required = ("filename", "media_id", "permalink", "timestamp", "username")
+          missing = [k for k in required if not str(receipt.get(k, "")).strip()]
+          if missing:
+              raise SystemExit("TASK 2 HOLD — incomplete Instagram receipt: " + ", ".join(missing))
+
+          if str(receipt.get("username", "")).lower() != "jeffbrown3579":
+              raise SystemExit("TASK 2 HOLD — receipt account mismatch")
+
+          print("TASK 2 VERIFIED INSTAGRAM RECEIPT")
+          print(json.dumps(receipt, indent=2))
+          PY
+
       - name: Commit verified Task 2 receipt state
-        if: env.TASK2_AUTH_READY == 'true'
         run: |
           if git diff --quiet -- state.json; then
             exit 0
@@ -112,11 +140,5 @@ jobs:
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
-      - name: Task 2 close state
-        shell: bash
-        run: |
-          if [ "$TASK2_AUTH_READY" = "true" ]; then
-            echo "TASK 2 EXECUTION PATH COMPLETED"
-          else
-            echo "TASK 2 EXECUTION PATH PRESERVED; PUBLISH STEP NOT ENTERED"
-          fi
+      - name: Task 2 PASS close
+        run: echo "TASK 2 PASS — VERIFIED INSTAGRAM PUBLICATION RECEIPT — CLOSE"
