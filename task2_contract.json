@@ -11,5 +11,9 @@
   "queue": [
     "One Universe, Ever Expanding.png",
     "One Universe, Expanding Forever.png"
+  ],
+  "required_scopes": [
+    "instagram_business_basic",
+    "instagram_business_content_publish"
   ]
 }
