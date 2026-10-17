@@ -88,22 +88,22 @@ def load_json(path, default):
     except Exception as exc:
         fail(f"invalid JSON in {path}: {exc}")
 
-def verify_public_png(url):
+def verify_public_jpeg(url):
     try:
         r = requests.get(url, stream=True, timeout=60, allow_redirects=True)
     except Exception as exc:
-        fail(f"PNG preflight request failed: {exc}")
+        fail(f"JPEG preflight request failed: {exc}")
     if not r.ok:
-        fail(f"PNG preflight HTTP {r.status_code}: {url}")
+        fail(f"JPEG preflight HTTP {r.status_code}: {url}")
     ctype = (r.headers.get("content-type") or "").lower()
-    if "image/png" not in ctype and "application/octet-stream" not in ctype:
-        fail(f"PNG preflight content-type is {ctype!r}")
+    if "image/jpeg" not in ctype and "application/octet-stream" not in ctype:
+        fail(f"JPEG preflight content-type is {ctype!r}")
     try:
         first = next(r.iter_content(chunk_size=64), b"")
     finally:
         r.close()
-    if not first.startswith(b"\x89PNG\r\n\x1a\n"):
-        fail("PNG preflight signature verification failed")
+    if not first.startswith(b"\xff\xd8\xff"):
+        fail("JPEG preflight signature verification failed")
 
 def resolve_slot():
     explicit = os.getenv("TASK2_SLOT", "").strip()
@@ -120,9 +120,9 @@ slot_id = f"{now.date().isoformat()}-{slot}"
 
 queue = load_json(QUEUE_PATH, [])
 if not isinstance(queue, list) or len(queue) < 2:
-    fail("queue.json must contain at least two distinct approved PNG filenames.")
+    fail("queue.json must contain at least two distinct approved PNG source filenames.")
 if len(set(queue)) != len(queue):
-    fail("queue.json contains duplicate filenames.")
+    fail("queue.json contains duplicate source filenames.")
 
 state = load_json(STATE_PATH, {"last_slot": None, "next_index": 0, "posted": []})
 if state.get("last_slot") == slot_id:
@@ -143,10 +143,11 @@ if state.get("last_slot") == slot_id:
 index = int(state.get("next_index", 0)) % len(queue)
 filename = queue[index]
 if not filename.lower().endswith(".png"):
-    fail(f"queued asset is not a PNG: {filename}")
+    fail(f"queued source asset is not a PNG: {filename}")
 
-image_url = f"{IMAGE_BASE_URL}/{requests.utils.quote(filename)}"
-verify_public_png(image_url)
+publish_filename = Path(filename).with_suffix(".jpg").name
+image_url = f"{IMAGE_BASE_URL}/{requests.utils.quote(publish_filename)}"
+verify_public_jpeg(image_url)
 
 container = api_post(f"{IG_USER_ID}/media", {
     "image_url": image_url,
@@ -197,6 +198,7 @@ state["next_index"] = (index + 1) % len(queue)
 state.setdefault("posted", []).append({
     "slot": slot_id,
     "filename": filename,
+    "publish_asset": publish_filename,
     "media_id": media_id,
     "permalink": receipt.get("permalink"),
     "timestamp": receipt.get("timestamp"),
