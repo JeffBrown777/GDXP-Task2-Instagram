@@ -52,6 +52,70 @@ jobs:
           git rev-parse --is-inside-work-tree >/dev/null
           echo "TASK 2 GITHUB AUTHORIZED PATH PASS"
 
+      - name: Instagram authorization target and publishing-scope gate
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_API_VERSION: v24.0
+          IG_GRAPH_HOST: https://graph.instagram.com
+          IG_EXPECTED_USERNAME: jeffbrown3579
+        shell: bash
+        run: |
+          if [ -z "$IG_ACCESS_TOKEN" ]; then
+            echo "::error::TASK 2 HOLD — Instagram authorization unavailable."
+            exit 1
+          fi
+          python - <<'PY'
+          import os, requests
+
+          token = os.environ["IG_ACCESS_TOKEN"]
+          host = os.environ["IG_GRAPH_HOST"].rstrip("/")
+          version = os.environ["IG_API_VERSION"]
+          expected = os.environ["IG_EXPECTED_USERNAME"].lower()
+
+          r = requests.get(
+              f"{host}/{version}/me",
+              params={"fields":"user_id,username,id,account_type","access_token":token},
+              timeout=60,
+          )
+          if not r.ok:
+              raise SystemExit(f"TASK 2 HOLD — Instagram authorization validation HTTP {r.status_code}")
+          p = r.json()
+          if isinstance(p.get("data"), list):
+              if len(p["data"]) != 1:
+                  raise SystemExit("TASK 2 HOLD — Instagram authorization returned ambiguous account set")
+              p = p["data"][0]
+
+          username = str(p.get("username") or "").strip().lstrip("@").lower()
+          if username != expected:
+              raise SystemExit("TASK 2 HOLD — Instagram authorized target mismatch")
+          account_type = str(p.get("account_type") or "").upper()
+          if account_type and account_type not in {"BUSINESS","MEDIA_CREATOR","CREATOR"}:
+              raise SystemExit("TASK 2 HOLD — Instagram target is not publish-capable professional account")
+          ig_user_id = str(p.get("user_id") or p.get("id") or "").strip()
+          if not ig_user_id:
+              raise SystemExit("TASK 2 HOLD — Instagram authorized account id missing")
+
+          q = requests.get(
+              f"{host}/{version}/{ig_user_id}/content_publishing_limit",
+              params={"fields":"quota_usage,config","access_token":token},
+              timeout=60,
+          )
+          if not q.ok:
+              raise SystemExit(f"TASK 2 HOLD — Instagram publishing-scope/quota validation HTTP {q.status_code}")
+          payload = q.json()
+          rows = payload.get("data") if isinstance(payload, dict) else None
+          if not isinstance(rows, list) or len(rows) != 1:
+              raise SystemExit("TASK 2 HOLD — Instagram publishing-scope/quota response invalid")
+          row = rows[0]
+          usage = int(row.get("quota_usage", 0))
+          config = row.get("config") or {}
+          total = config.get("quota_total")
+          if total is not None and usage >= int(total):
+              raise SystemExit(f"TASK 2 HOLD — Instagram publishing quota exhausted: {usage}/{total}")
+
+          print("TASK 2 INSTAGRAM AUTHORIZED TARGET / PUBLISHING-SCOPE GATE PASS")
+          PY
+
       - name: Resolve Task 2 lane
         shell: bash
         run: |
@@ -174,70 +238,6 @@ jobs:
               if actual_sha != expected_sha:
                   raise SystemExit(f"TASK 2 HOLD — public Instagram transport SHA-256 mismatch: {publish_asset}")
           print("TASK 2 PUBLIC INSTAGRAM TRANSPORT PATH GATE PASS")
-          PY
-
-      - name: Instagram authorization target and publishing-scope gate
-        env:
-          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
-          IG_API_VERSION: v24.0
-          IG_GRAPH_HOST: https://graph.instagram.com
-          IG_EXPECTED_USERNAME: jeffbrown3579
-        shell: bash
-        run: |
-          if [ -z "$IG_ACCESS_TOKEN" ]; then
-            echo "::error::TASK 2 HOLD — Instagram authorization unavailable."
-            exit 1
-          fi
-          python - <<'PY'
-          import os, requests
-
-          token = os.environ["IG_ACCESS_TOKEN"]
-          host = os.environ["IG_GRAPH_HOST"].rstrip("/")
-          version = os.environ["IG_API_VERSION"]
-          expected = os.environ["IG_EXPECTED_USERNAME"].lower()
-
-          r = requests.get(
-              f"{host}/{version}/me",
-              params={"fields":"user_id,username,id,account_type","access_token":token},
-              timeout=60,
-          )
-          if not r.ok:
-              raise SystemExit(f"TASK 2 HOLD — Instagram authorization validation HTTP {r.status_code}")
-          p = r.json()
-          if isinstance(p.get("data"), list):
-              if len(p["data"]) != 1:
-                  raise SystemExit("TASK 2 HOLD — Instagram authorization returned ambiguous account set")
-              p = p["data"][0]
-
-          username = str(p.get("username") or "").strip().lstrip("@").lower()
-          if username != expected:
-              raise SystemExit("TASK 2 HOLD — Instagram authorized target mismatch")
-          account_type = str(p.get("account_type") or "").upper()
-          if account_type and account_type not in {"BUSINESS","MEDIA_CREATOR","CREATOR"}:
-              raise SystemExit("TASK 2 HOLD — Instagram target is not publish-capable professional account")
-          ig_user_id = str(p.get("user_id") or p.get("id") or "").strip()
-          if not ig_user_id:
-              raise SystemExit("TASK 2 HOLD — Instagram authorized account id missing")
-
-          q = requests.get(
-              f"{host}/{version}/{ig_user_id}/content_publishing_limit",
-              params={"fields":"quota_usage,config","access_token":token},
-              timeout=60,
-          )
-          if not q.ok:
-              raise SystemExit(f"TASK 2 HOLD — Instagram publishing-scope/quota validation HTTP {q.status_code}")
-          payload = q.json()
-          rows = payload.get("data") if isinstance(payload, dict) else None
-          if not isinstance(rows, list) or len(rows) != 1:
-              raise SystemExit("TASK 2 HOLD — Instagram publishing-scope/quota response invalid")
-          row = rows[0]
-          usage = int(row.get("quota_usage", 0))
-          config = row.get("config") or {}
-          total = config.get("quota_total")
-          if total is not None and usage >= int(total):
-              raise SystemExit(f"TASK 2 HOLD — Instagram publishing quota exhausted: {usage}/{total}")
-
-          print("TASK 2 INSTAGRAM AUTHORIZED TARGET / PUBLISHING-SCOPE GATE PASS")
           PY
 
       - name: Publish next approved PNG source via verified Instagram JPEG transport
