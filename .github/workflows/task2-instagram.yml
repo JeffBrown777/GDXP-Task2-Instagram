@@ -58,19 +58,40 @@ jobs:
             echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
           fi
 
-      - name: Instagram authorization gate
-        env:
-          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
-        shell: bash
-        run: |
-          if [ -z "$IG_ACCESS_TOKEN" ]; then
-            echo "::error::TASK 2 HOLD — IG_ACCESS_TOKEN is absent. Publication was not attempted."
-            exit 1
-          fi
-          echo "TASK 2 AUTH READY"
-
       - name: Reconstruct approved PNG and Instagram JPEG transport assets
         run: python bootstrap_assets.py
+
+      - name: Validate approved source and Instagram transport assets
+        shell: bash
+        run: |
+          python -m py_compile bootstrap_assets.py task2_instagram_publisher.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from PIL import Image
+
+          queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
+          if not isinstance(queue, list) or len(queue) < 2 or len(set(queue)) != len(queue):
+              raise SystemExit("TASK 2 HOLD — queue must contain at least two distinct approved PNG source assets")
+
+          for source_name in queue:
+              source = Path("png") / source_name
+              transport = Path("instagram_media") / Path(source_name).with_suffix(".jpg").name
+              if not source.is_file():
+                  raise SystemExit(f"TASK 2 HOLD — missing approved PNG source: {source}")
+              if not transport.is_file():
+                  raise SystemExit(f"TASK 2 HOLD — missing Instagram JPEG transport: {transport}")
+              if source.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
+                  raise SystemExit(f"TASK 2 HOLD — invalid PNG signature: {source}")
+              if transport.read_bytes()[:3] != b"\xff\xd8\xff":
+                  raise SystemExit(f"TASK 2 HOLD — invalid JPEG signature: {transport}")
+              with Image.open(source) as s, Image.open(transport) as t:
+                  if s.size != t.size:
+                      raise SystemExit(f"TASK 2 HOLD — source/transport dimension mismatch: {source_name}")
+                  t.verify()
+
+          print("TASK 2 SOURCE/TRANSPORT VALIDATION PASS")
+          PY
 
       - name: Publish reconstructed assets to raw GitHub if newly created
         run: |
@@ -83,6 +104,17 @@ jobs:
             git push origin "HEAD:${GITHUB_REF_NAME}"
             sleep 15
           fi
+
+      - name: Instagram authorization gate
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$IG_ACCESS_TOKEN" ]; then
+            echo "::error::TASK 2 HOLD — IG_ACCESS_TOKEN is absent. Publication was not attempted."
+            exit 1
+          fi
+          echo "TASK 2 AUTH READY"
 
       - name: Publish next approved PNG source via verified Instagram JPEG transport
         env:
