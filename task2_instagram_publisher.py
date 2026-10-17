@@ -75,8 +75,8 @@ def resolve_account():
         fail("configured IG_USER_ID does not match authenticated Instagram account")
     IG_USER_ID = resolved
     account_type = str(profile.get("account_type") or "").upper()
-    if account_type and account_type not in {"BUSINESS", "MEDIA_CREATOR"}:
-        fail(f"Instagram account is not a publish-capable professional account: {account_type}")
+    if account_type not in {"BUSINESS", "MEDIA_CREATOR"}:
+        fail(f"Instagram account type missing or not publish-capable: {account_type or 'MISSING'}")
     print(f"TASK 2 TARGET VERIFIED: @{username}")
 
 def load_json(path, default):
@@ -149,6 +149,28 @@ if not isinstance(queue, list) or len(queue) < 2:
 if len(set(queue)) != len(queue):
     fail("queue.json contains duplicate source filenames.")
 
+approved = load_json("approved_source_assets.json", {})
+manifest = load_json("task2_asset_manifest.json", {})
+if not isinstance(approved, dict) or set(approved) != set(queue):
+    fail("approved source asset control does not exactly match queue")
+if not isinstance(manifest, dict) or set(manifest) != set(queue):
+    fail("validated asset manifest does not exactly match queue")
+for source_name in queue:
+    approved_entry = approved.get(source_name)
+    manifest_entry = manifest.get(source_name)
+    if not isinstance(approved_entry, dict) or not isinstance(manifest_entry, dict):
+        fail(f"asset control entry invalid: {source_name}")
+    approved_source_sha = str(approved_entry.get("source_sha256") or "").lower()
+    manifest_source_sha = str(manifest_entry.get("source_sha256") or "").lower()
+    publish_asset = str(manifest_entry.get("publish_asset") or "")
+    publish_sha = str(manifest_entry.get("publish_sha256") or "").lower()
+    if len(approved_source_sha) != 64 or manifest_source_sha != approved_source_sha:
+        fail(f"approved source SHA-256 control mismatch: {source_name}")
+    if publish_asset != Path(source_name).with_suffix(".jpg").name:
+        fail(f"validated transport filename mismatch: {source_name}")
+    if len(publish_sha) != 64:
+        fail(f"validated transport SHA-256 missing/invalid: {source_name}")
+
 state = load_json(STATE_PATH, {"last_slot": None, "next_index": 0, "posted": []})
 if not isinstance(state, dict):
     fail("state.json root must be an object")
@@ -171,6 +193,20 @@ for i, item in enumerate(posted_history):
     missing_history = [k for k in required_history if not str(item.get(k, "")).strip()]
     if missing_history:
         fail(f"state posted[{i}] incomplete: " + ", ".join(missing_history))
+    if item["filename"] not in queue:
+        fail(f"state posted[{i}] source asset is not approved: {item['filename']}")
+    history_entry = manifest.get(item["filename"])
+    history_approved = approved.get(item["filename"])
+    if not isinstance(history_entry, dict) or not isinstance(history_approved, dict):
+        fail(f"state posted[{i}] asset controls missing")
+    if history_entry.get("source_sha256") != history_approved.get("source_sha256"):
+        fail(f"state posted[{i}] approved source SHA-256 mismatch")
+    if item["publish_asset"] != history_entry.get("publish_asset"):
+        fail(f"state posted[{i}] transport asset mismatch")
+    if item["publish_sha256"] != history_entry.get("publish_sha256"):
+        fail(f"state posted[{i}] transport SHA-256 mismatch")
+    if str(item["username"]).strip().lower() != EXPECTED_USERNAME:
+        fail(f"state posted[{i}] username mismatch")
     if item["slot"] in seen_slots:
         fail(f"duplicate slot in state history: {item['slot']}")
     if str(item["media_id"]) in seen_media_ids:
@@ -191,6 +227,21 @@ if state.get("last_slot") == slot_id:
     missing = [k for k in required if not str(receipt.get(k, "")).strip()]
     if missing:
         fail("stored receipt is incomplete: " + ", ".join(missing))
+    if receipt["filename"] not in queue:
+        fail("stored receipt source asset is not approved")
+    duplicate_entry = manifest.get(receipt["filename"])
+    duplicate_approved = approved.get(receipt["filename"])
+    if not isinstance(duplicate_entry, dict) or not isinstance(duplicate_approved, dict):
+        fail("stored receipt asset controls missing")
+    if duplicate_entry.get("source_sha256") != duplicate_approved.get("source_sha256"):
+        fail("stored receipt approved source SHA-256 mismatch")
+    if receipt["publish_asset"] != duplicate_entry.get("publish_asset"):
+        fail("stored receipt transport asset mismatch")
+    if receipt["publish_sha256"] != duplicate_entry.get("publish_sha256"):
+        fail("stored receipt transport SHA-256 mismatch")
+    expected_next = (queue.index(receipt["filename"]) + 1) % len(queue)
+    if next_index_raw != expected_next:
+        fail("stored receipt queue advancement mismatch")
     if str(receipt.get("username", "")).strip().lower() != EXPECTED_USERNAME:
         fail(f"stored receipt username mismatch: {receipt.get('username')}")
     live = api_get(str(receipt["media_id"]), {
@@ -223,7 +274,6 @@ if not filename.lower().endswith(".png"):
     fail(f"queued source asset is not a PNG: {filename}")
 
 publish_filename = Path(filename).with_suffix(".jpg").name
-manifest = load_json("task2_asset_manifest.json", {})
 entry = manifest.get(filename) if isinstance(manifest, dict) else None
 if not isinstance(entry, dict):
     fail(f"validated asset manifest missing source entry: {filename}")
