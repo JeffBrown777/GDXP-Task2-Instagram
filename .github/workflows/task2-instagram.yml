@@ -289,24 +289,39 @@ jobs:
       - name: Verify Instagram publication receipt and release gate
         env:
           TASK2_SLOT: ${{ env.TASK2_SLOT }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_API_VERSION: v24.0
+          IG_GRAPH_HOST: https://graph.instagram.com
+          IG_EXPECTED_USERNAME: jeffbrown3579
         shell: bash
         run: |
           python - <<'PY'
-          import json, os
+          import json, os, requests
           from datetime import datetime
           from pathlib import Path
           from zoneinfo import ZoneInfo
 
           slot = os.environ["TASK2_SLOT"]
+          token = os.environ["IG_ACCESS_TOKEN"].strip()
+          version = os.environ["IG_API_VERSION"]
+          host = os.environ["IG_GRAPH_HOST"].rstrip("/")
+          expected_username = os.environ["IG_EXPECTED_USERNAME"].strip().lower()
+          if not token:
+              raise SystemExit("TASK 2 HOLD — release-gate Instagram authorization unavailable")
+
           now = datetime.now(ZoneInfo("America/Phoenix"))
           slot_id = f"{now.date().isoformat()}-{slot}"
           state = json.loads(Path("state.json").read_text(encoding="utf-8"))
           queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
           manifest = json.loads(Path("task2_asset_manifest.json").read_text(encoding="utf-8"))
+          approved = json.loads(Path("approved_source_assets.json").read_text(encoding="utf-8"))
 
           if state.get("last_slot") != slot_id:
               raise SystemExit("TASK 2 HOLD — state last_slot does not match release lane")
-          matches = [x for x in state.get("posted", []) if x.get("slot") == slot_id]
+          posted = state.get("posted", [])
+          if not isinstance(posted, list):
+              raise SystemExit("TASK 2 HOLD — release state posted field invalid")
+          matches = [x for x in posted if isinstance(x, dict) and x.get("slot") == slot_id]
           if len(matches) != 1:
               raise SystemExit("TASK 2 HOLD — release lane must have exactly one verified receipt")
 
@@ -317,15 +332,49 @@ jobs:
               raise SystemExit("TASK 2 HOLD — incomplete Instagram receipt: " + ", ".join(missing))
           if receipt["filename"] not in queue:
               raise SystemExit("TASK 2 HOLD — receipt source asset not in approved queue")
+
           entry = manifest.get(receipt["filename"])
-          if not isinstance(entry, dict):
-              raise SystemExit("TASK 2 HOLD — receipt asset absent from validated artifact manifest")
+          approved_entry = approved.get(receipt["filename"])
+          if not isinstance(entry, dict) or not isinstance(approved_entry, dict):
+              raise SystemExit("TASK 2 HOLD — receipt asset absent from approved artifact controls")
+          if entry.get("source_sha256") != approved_entry.get("source_sha256"):
+              raise SystemExit("TASK 2 HOLD — approved source SHA-256 mismatch at release")
           if receipt["publish_asset"] != entry.get("publish_asset"):
               raise SystemExit("TASK 2 HOLD — receipt transport artifact mismatch")
           if receipt["publish_sha256"] != entry.get("publish_sha256"):
               raise SystemExit("TASK 2 HOLD — receipt transport SHA-256 mismatch")
-          if str(receipt["username"]).lower() != "jeffbrown3579":
+          if str(receipt["username"]).strip().lower() != expected_username:
               raise SystemExit("TASK 2 HOLD — receipt account mismatch")
+
+          media_ids = [str(x.get("media_id") or "") for x in posted if isinstance(x, dict)]
+          permalinks = [str(x.get("permalink") or "") for x in posted if isinstance(x, dict)]
+          slots = [str(x.get("slot") or "") for x in posted if isinstance(x, dict)]
+          if len(media_ids) != len(set(media_ids)) or len(permalinks) != len(set(permalinks)) or len(slots) != len(set(slots)):
+              raise SystemExit("TASK 2 HOLD — duplicate receipt identity detected at release")
+
+          expected_next = (queue.index(receipt["filename"]) + 1) % len(queue)
+          if int(state.get("next_index", -1)) != expected_next:
+              raise SystemExit("TASK 2 HOLD — queue advancement mismatch at release")
+
+          r = requests.get(
+              f"{host}/{version}/{receipt['media_id']}",
+              params={"fields":"id,permalink,timestamp,media_type,username","access_token":token},
+              timeout=60,
+          )
+          if not r.ok:
+              raise SystemExit(f"TASK 2 HOLD — live receipt verification HTTP {r.status_code}")
+          live = r.json()
+          if str(live.get("id") or "") != str(receipt["media_id"]):
+              raise SystemExit("TASK 2 HOLD — live receipt media_id mismatch")
+          if str(live.get("username") or "").strip().lower() != expected_username:
+              raise SystemExit("TASK 2 HOLD — live receipt username mismatch")
+          if live.get("media_type") != "IMAGE":
+              raise SystemExit("TASK 2 HOLD — live receipt media_type mismatch")
+          if str(live.get("permalink") or "") != str(receipt["permalink"]):
+              raise SystemExit("TASK 2 HOLD — live receipt permalink mismatch")
+          if str(live.get("timestamp") or "") != str(receipt["timestamp"]):
+              raise SystemExit("TASK 2 HOLD — live receipt timestamp mismatch")
+
           try:
               receipt_time = datetime.fromisoformat(str(receipt["timestamp"]).replace("Z","+00:00"))
           except Exception:
@@ -333,7 +382,7 @@ jobs:
           if receipt_time.astimezone(ZoneInfo("America/Phoenix")).date() != now.date():
               raise SystemExit("TASK 2 HOLD — receipt PHX date mismatch")
 
-          print("TASK 2 VERIFIED INSTAGRAM RECEIPT / RELEASE GATE PASS")
+          print("TASK 2 VERIFIED LIVE INSTAGRAM RECEIPT / RELEASE GATE PASS")
           print(json.dumps(receipt, indent=2))
           PY
 
