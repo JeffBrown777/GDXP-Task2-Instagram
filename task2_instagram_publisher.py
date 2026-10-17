@@ -191,20 +191,25 @@ except Exception:
     fail("Instagram publishing quota usage is invalid")
 if quota_usage < 0:
     fail("Instagram publishing quota usage is negative")
-quota_config = limit_row.get("config") or {}
+quota_config = limit_row.get("config")
+if not isinstance(quota_config, dict):
+    fail("Instagram publishing quota config is missing")
 quota_total = quota_config.get("quota_total")
-if quota_total is not None:
-    try:
-        quota_total = int(quota_total)
-    except Exception:
-        fail("Instagram publishing quota total is invalid")
-    if quota_total <= 0:
-        fail("Instagram publishing quota total is non-positive")
-    if quota_usage >= quota_total:
-        fail(f"Instagram publishing quota exhausted: {quota_usage}/{quota_total}")
+quota_duration = quota_config.get("quota_duration")
+if quota_total is None or quota_duration is None:
+    fail("Instagram publishing quota config is incomplete")
+try:
+    quota_total = int(quota_total)
+    quota_duration = int(quota_duration)
+except Exception:
+    fail("Instagram publishing quota config values are invalid")
+if quota_total <= 0 or quota_duration <= 0:
+    fail("Instagram publishing quota config values must be positive")
+if quota_usage >= quota_total:
+    fail(f"Instagram publishing quota exhausted: {quota_usage}/{quota_total}")
 print(
     f"TASK 2 PUBLISHING QUOTA VERIFIED: "
-    f"{quota_usage}/{quota_total if quota_total is not None else 'runtime limit unavailable'}"
+    f"{quota_usage}/{quota_total} over {quota_duration} seconds"
 )
 
 now = datetime.now(PHX)
