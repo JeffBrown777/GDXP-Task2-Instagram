@@ -1,7 +1,7 @@
 {
   "route": "instagram_login",
   "graph_host": "https://graph.instagram.com",
-  "api_version": "v24.0",
+  "api_version": "v26.0",
   "target_username": "jeffbrown3579",
   "timezone": "America/Phoenix",
   "slots": {
@@ -15,5 +15,6 @@
   "required_scopes": [
     "instagram_business_basic",
     "instagram_business_content_publish"
-  ]
+  ],
+  "ai_generated_disclosure": true
 }
