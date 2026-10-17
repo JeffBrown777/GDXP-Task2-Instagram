@@ -1,0 +1,15 @@
+{
+  "route": "instagram_login",
+  "graph_host": "https://graph.instagram.com",
+  "api_version": "v24.0",
+  "target_username": "jeffbrown3579",
+  "timezone": "America/Phoenix",
+  "slots": {
+    "15": "0 22 * * *",
+    "09": "0 16 * * *"
+  },
+  "queue": [
+    "One Universe, Ever Expanding.png",
+    "One Universe, Expanding Forever.png"
+  ]
+}
