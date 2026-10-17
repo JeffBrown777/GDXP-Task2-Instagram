@@ -2,6 +2,7 @@
 import hashlib, json, os, sys, time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 import requests
 
@@ -99,8 +100,8 @@ def resolve_account():
     if EXPECTED_USERNAME and username != EXPECTED_USERNAME:
         fail(f"wrong Instagram target account: @{username}; expected @{EXPECTED_USERNAME}")
     resolved = str(profile.get("user_id") or profile.get("id") or "").strip()
-    if not resolved:
-        fail(f"Instagram profile lookup did not return a usable account id: {profile}")
+    if not resolved or not resolved.isdigit():
+        fail(f"Instagram profile lookup did not return a usable numeric account id: {profile}")
     if IG_USER_ID and IG_USER_ID != resolved:
         fail("configured IG_USER_ID does not match authenticated Instagram account")
     IG_USER_ID = resolved
@@ -117,6 +118,25 @@ def load_json(path, default):
         return json.loads(p.read_text(encoding="utf-8"))
     except Exception as exc:
         fail(f"invalid JSON in {path}: {exc}")
+
+def parse_receipt_time(value, label):
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        fail(f"{label} timestamp is not valid ISO-8601: {value}")
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        fail(f"{label} timestamp must include an explicit timezone offset")
+    return parsed
+
+def validate_permalink(value, label):
+    parsed = urlparse(str(value))
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not (
+        host == "instagram.com" or host.endswith(".instagram.com")
+    ):
+        fail(f"{label} permalink is not an HTTPS Instagram URL: {value}")
+    if not parsed.path or parsed.path == "/":
+        fail(f"{label} permalink path is invalid: {value}")
 
 def verify_public_jpeg(url, expected_sha256):
     try:
@@ -229,6 +249,20 @@ for i, item in enumerate(posted_history):
     missing_history = [k for k in required_history if not str(item.get(k, "")).strip()]
     if missing_history:
         fail(f"state posted[{i}] incomplete: " + ", ".join(missing_history))
+    slot_value = str(item["slot"])
+    try:
+        slot_date_text, slot_lane = slot_value.rsplit("-", 1)
+        slot_date = datetime.strptime(slot_date_text, "%Y-%m-%d").date()
+    except Exception:
+        fail(f"state posted[{i}] slot format invalid: {slot_value}")
+    if slot_lane not in CONTRACT["slots"]:
+        fail(f"state posted[{i}] slot lane invalid: {slot_value}")
+    history_time = parse_receipt_time(item["timestamp"], f"state posted[{i}]")
+    if history_time.astimezone(PHX).date() != slot_date:
+        fail(f"state posted[{i}] timestamp/slot PHX date mismatch")
+    if not str(item["media_id"]).isdigit():
+        fail(f"state posted[{i}] media_id is not numeric")
+    validate_permalink(item["permalink"], f"state posted[{i}]")
     if item["filename"] not in queue:
         fail(f"state posted[{i}] source asset is not approved: {item['filename']}")
     history_approved = approved.get(item["filename"])
@@ -331,10 +365,8 @@ if matches:
         fail(f"stored receipt permalink mismatch: {live}")
     if str(live.get("timestamp") or "") != str(receipt["timestamp"]):
         fail(f"stored receipt timestamp mismatch: {live}")
-    try:
-        live_time = datetime.fromisoformat(str(live["timestamp"]).replace("Z", "+00:00"))
-    except Exception:
-        fail(f"stored receipt live timestamp is not valid ISO-8601: {live}")
+    validate_permalink(live.get("permalink"), "stored receipt live")
+    live_time = parse_receipt_time(live.get("timestamp"), "stored receipt live")
     if live_time.astimezone(PHX).date() != now.date():
         fail(f"stored receipt live PHX date mismatch: {live}")
     print(f"TASK 2 PASS: slot {slot_id} has a live reverified Instagram receipt; duplicate suppressed.")
@@ -362,9 +394,9 @@ container = api_post(f"{IG_USER_ID}/media", {
     "image_url": image_url,
     "access_token": ACCESS_TOKEN,
 })
-creation_id = container.get("id")
-if not creation_id:
-    fail(f"no creation_id returned: {container}")
+creation_id = str(container.get("id") or "").strip()
+if not creation_id or not creation_id.isdigit():
+    fail(f"no usable numeric creation_id returned: {container}")
 
 status = None
 for attempt in range(5):
@@ -388,15 +420,15 @@ published = api_post(f"{IG_USER_ID}/media_publish", {
     "creation_id": creation_id,
     "access_token": ACCESS_TOKEN,
 })
-media_id = published.get("id")
-if not media_id:
-    fail(f"no media_id returned: {published}")
+media_id = str(published.get("id") or "").strip()
+if not media_id or not media_id.isdigit():
+    fail(f"no usable numeric media_id returned: {published}")
 
 receipt = api_get(media_id, {
     "fields": "id,permalink,timestamp,media_type,username",
     "access_token": ACCESS_TOKEN,
 })
-if receipt.get("id") != media_id:
+if str(receipt.get("id") or "").strip() != media_id:
     fail(f"receipt media id mismatch: {receipt}")
 if receipt.get("media_type") != "IMAGE":
     fail(f"receipt media_type is not IMAGE: {receipt}")
@@ -406,10 +438,8 @@ if str(receipt.get("username")).strip().lower() != EXPECTED_USERNAME:
     fail(f"receipt username mismatch: {receipt}")
 if not receipt.get("permalink") or not receipt.get("timestamp"):
     fail(f"receipt missing permalink or timestamp: {receipt}")
-try:
-    receipt_time = datetime.fromisoformat(str(receipt["timestamp"]).replace("Z", "+00:00"))
-except Exception:
-    fail(f"receipt timestamp is not valid ISO-8601: {receipt}")
+validate_permalink(receipt["permalink"], "receipt")
+receipt_time = parse_receipt_time(receipt["timestamp"], "receipt")
 if receipt_time.astimezone(PHX).date() != now.date():
     fail(f"receipt PHX date mismatch: {receipt}")
 
