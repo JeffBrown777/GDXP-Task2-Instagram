@@ -56,8 +56,12 @@ if missing:
     fail("missing required environment values: " + ", ".join(missing))
 if len(MEDIA_COMMIT) != 40 or any(ch not in "0123456789abcdef" for ch in MEDIA_COMMIT):
     fail("TASK2_MEDIA_COMMIT must be a full 40-character Git commit SHA")
-if f"/{MEDIA_COMMIT}/instagram_media" not in IMAGE_BASE_URL:
-    fail("IG_IMAGE_BASE_URL is not pinned to TASK2_MEDIA_COMMIT")
+expected_image_base_url = (
+    "https://raw.githubusercontent.com/"
+    f"JeffBrown777/GDXP-Task2-Instagram/{MEDIA_COMMIT}/instagram_media"
+)
+if IMAGE_BASE_URL != expected_image_base_url:
+    fail("IG_IMAGE_BASE_URL does not exactly match the immutable Task 2 media path")
 
 def api_post(path, data):
     url = f"{GRAPH_HOST}/{API_VERSION}/{path.lstrip('/')}"
