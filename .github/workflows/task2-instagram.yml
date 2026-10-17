@@ -139,8 +139,10 @@ jobs:
               )
 
           ig_user_id = str(profile.get("user_id") or profile.get("id") or "").strip()
-          if not ig_user_id:
-              raise SystemExit("TASK 2 HOLD — Instagram authorized account id missing")
+          if not ig_user_id or not ig_user_id.isdigit():
+              raise SystemExit(
+                  "TASK 2 HOLD — Instagram authorized numeric account id missing"
+              )
 
           q = requests.get(
               f"{host}/{version}/{ig_user_id}/content_publishing_limit",
@@ -163,13 +165,33 @@ jobs:
               )
 
           row = rows[0]
-          usage = int(row.get("quota_usage", 0))
+          try:
+              usage = int(row.get("quota_usage", 0))
+          except Exception:
+              raise SystemExit(
+                  "TASK 2 HOLD — Instagram publishing quota usage is invalid"
+              )
+          if usage < 0:
+              raise SystemExit(
+                  "TASK 2 HOLD — Instagram publishing quota usage is negative"
+              )
           config = row.get("config") or {}
           total = config.get("quota_total")
-          if total is not None and usage >= int(total):
-              raise SystemExit(
-                  f"TASK 2 HOLD — Instagram publishing quota exhausted: {usage}/{total}"
-              )
+          if total is not None:
+              try:
+                  total = int(total)
+              except Exception:
+                  raise SystemExit(
+                      "TASK 2 HOLD — Instagram publishing quota total is invalid"
+                  )
+              if total <= 0:
+                  raise SystemExit(
+                      "TASK 2 HOLD — Instagram publishing quota total is non-positive"
+                  )
+              if usage >= total:
+                  raise SystemExit(
+                      f"TASK 2 HOLD — Instagram publishing quota exhausted: {usage}/{total}"
+                  )
 
           print("TASK 2 INSTAGRAM AUTHORIZED TARGET / PUBLISHING-SCOPE GATE PASS")
           PY
@@ -470,7 +492,7 @@ jobs:
           import os
           from datetime import datetime
           from pathlib import Path
-          from urllib.parse import quote
+          from urllib.parse import quote, urlparse
           from zoneinfo import ZoneInfo
 
           import requests
@@ -652,6 +674,19 @@ jobs:
 
           if str(receipt["username"]).strip().lower() != expected_username:
               raise SystemExit("TASK 2 HOLD — receipt account mismatch")
+          if not str(receipt["media_id"]).isdigit():
+              raise SystemExit("TASK 2 HOLD — receipt media_id is not numeric")
+          permalink_parts = urlparse(str(receipt["permalink"]))
+          permalink_host = (permalink_parts.hostname or "").lower()
+          if permalink_parts.scheme != "https" or not (
+              permalink_host == "instagram.com"
+              or permalink_host.endswith(".instagram.com")
+          ):
+              raise SystemExit(
+                  "TASK 2 HOLD — receipt permalink is not an HTTPS Instagram URL"
+              )
+          if not permalink_parts.path or permalink_parts.path == "/":
+              raise SystemExit("TASK 2 HOLD — receipt permalink path is invalid")
 
           media_ids = [
               str(item.get("media_id") or "")
@@ -711,6 +746,10 @@ jobs:
               )
           except Exception:
               raise SystemExit("TASK 2 HOLD — receipt timestamp invalid")
+          if receipt_time.tzinfo is None or receipt_time.utcoffset() is None:
+              raise SystemExit(
+                  "TASK 2 HOLD — receipt timestamp lacks an explicit timezone"
+              )
 
           if receipt_time.astimezone(
               ZoneInfo("America/Phoenix")
