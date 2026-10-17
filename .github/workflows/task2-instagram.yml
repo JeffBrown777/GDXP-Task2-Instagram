@@ -234,12 +234,12 @@ jobs:
               fi
               ;;
             push)
-              if grep -Eqi '(^|[^[:alnum:]])9AM([^[:alnum:]]|$)|(^|[^[:alnum:]])09([^[:alnum:]]|$)|9:00' task2-trigger.txt; then
+              if grep -Fqi 'Task 2 IG 9AM' task2-trigger.txt; then
                 echo "TASK2_SLOT=09" >> "$GITHUB_ENV"
-              elif grep -Eqi '(^|[^[:alnum:]])3PM([^[:alnum:]]|$)|(^|[^[:alnum:]])15([^[:alnum:]]|$)|3:00' task2-trigger.txt; then
+              elif grep -Fqi 'Task 2 IG 3PM' task2-trigger.txt; then
                 echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
               else
-                echo "::error::TASK 2 HOLD — push trigger lane is not explicit."
+                echo "::error::TASK 2 HOLD — push trigger must contain exact Task 2 IG 9AM or Task 2 IG 3PM lane."
                 exit 1
               fi
               ;;
