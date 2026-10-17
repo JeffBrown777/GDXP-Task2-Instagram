@@ -225,22 +225,24 @@ seen_permalinks = set()
 for i, item in enumerate(posted_history):
     if not isinstance(item, dict):
         fail(f"state posted[{i}] must be an object")
-    required_history = ("slot", "filename", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username")
+    required_history = ("slot", "filename", "source_sha256", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username")
     missing_history = [k for k in required_history if not str(item.get(k, "")).strip()]
     if missing_history:
         fail(f"state posted[{i}] incomplete: " + ", ".join(missing_history))
     if item["filename"] not in queue:
         fail(f"state posted[{i}] source asset is not approved: {item['filename']}")
-    history_entry = manifest.get(item["filename"])
     history_approved = approved.get(item["filename"])
-    if not isinstance(history_entry, dict) or not isinstance(history_approved, dict):
-        fail(f"state posted[{i}] asset controls missing")
-    if history_entry.get("source_sha256") != history_approved.get("source_sha256"):
+    if not isinstance(history_approved, dict):
+        fail(f"state posted[{i}] approved source control missing")
+    expected_source_sha = str(history_approved.get("source_sha256") or "").lower()
+    if str(item["source_sha256"]).lower() != expected_source_sha:
         fail(f"state posted[{i}] approved source SHA-256 mismatch")
-    if item["publish_asset"] != history_entry.get("publish_asset"):
+    expected_publish_asset = Path(item["filename"]).with_suffix(".jpg").name
+    if item["publish_asset"] != expected_publish_asset:
         fail(f"state posted[{i}] transport asset mismatch")
-    if item["publish_sha256"] != history_entry.get("publish_sha256"):
-        fail(f"state posted[{i}] transport SHA-256 mismatch")
+    history_publish_sha = str(item["publish_sha256"] or "").lower()
+    if len(history_publish_sha) != 64 or any(ch not in "0123456789abcdef" for ch in history_publish_sha):
+        fail(f"state posted[{i}] transport SHA-256 invalid")
     publish_commit = str(item.get("publish_commit") or "").lower()
     if len(publish_commit) != 40 or any(ch not in "0123456789abcdef" for ch in publish_commit):
         fail(f"state posted[{i}] publish commit invalid")
@@ -262,25 +264,37 @@ if state.get("last_slot") == slot_id:
     if len(matches) != 1:
         fail(f"state claims slot {slot_id} posted but does not contain exactly one receipt")
     receipt = matches[0]
-    required = ("filename", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username")
+    required = ("filename", "source_sha256", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username")
     missing = [k for k in required if not str(receipt.get(k, "")).strip()]
     if missing:
         fail("stored receipt is incomplete: " + ", ".join(missing))
     if receipt["filename"] not in queue:
         fail("stored receipt source asset is not approved")
-    duplicate_entry = manifest.get(receipt["filename"])
     duplicate_approved = approved.get(receipt["filename"])
-    if not isinstance(duplicate_entry, dict) or not isinstance(duplicate_approved, dict):
-        fail("stored receipt asset controls missing")
-    if duplicate_entry.get("source_sha256") != duplicate_approved.get("source_sha256"):
+    if not isinstance(duplicate_approved, dict):
+        fail("stored receipt approved source control missing")
+    approved_source_sha = str(duplicate_approved.get("source_sha256") or "").lower()
+    if str(receipt["source_sha256"]).lower() != approved_source_sha:
         fail("stored receipt approved source SHA-256 mismatch")
-    if receipt["publish_asset"] != duplicate_entry.get("publish_asset"):
+    expected_publish_asset = Path(receipt["filename"]).with_suffix(".jpg").name
+    if receipt["publish_asset"] != expected_publish_asset:
         fail("stored receipt transport asset mismatch")
-    if receipt["publish_sha256"] != duplicate_entry.get("publish_sha256"):
-        fail("stored receipt transport SHA-256 mismatch")
     stored_commit = str(receipt["publish_commit"]).strip().lower()
     if len(stored_commit) != 40 or any(ch not in "0123456789abcdef" for ch in stored_commit):
         fail("stored receipt immutable media commit invalid")
+    stored_source_url = (
+        "https://raw.githubusercontent.com/"
+        f"JeffBrown777/GDXP-Task2-Instagram/{stored_commit}/png/"
+        f"{requests.utils.quote(receipt['filename'])}"
+    )
+    source_response = requests.get(stored_source_url, timeout=60, allow_redirects=True)
+    if not source_response.ok:
+        fail(f"stored receipt source HTTP {source_response.status_code}")
+    if not source_response.content.startswith(b"\x89PNG\r\n\x1a\n"):
+        fail("stored receipt source PNG signature mismatch")
+    if hashlib.sha256(source_response.content).hexdigest() != approved_source_sha:
+        fail("stored receipt source SHA-256 mismatch at immutable commit")
+
     stored_image_url = (
         "https://raw.githubusercontent.com/"
         f"JeffBrown777/GDXP-Task2-Instagram/{stored_commit}/instagram_media/"
@@ -399,6 +413,7 @@ if any(str(x.get("permalink") or "") == str(receipt.get("permalink") or "") for 
 record = {
     "slot": slot_id,
     "filename": filename,
+    "source_sha256": str(entry["source_sha256"]).lower(),
     "publish_asset": publish_filename,
     "publish_sha256": publish_sha256,
     "publish_commit": MEDIA_COMMIT,
