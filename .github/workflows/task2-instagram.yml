@@ -53,9 +53,36 @@ jobs:
           test -f state.json
           test -f approved_source_assets.json
           test -f assets_b64/manifest.json
+          test -f task2_contract.json
           test -f requirements.txt
           git rev-parse --is-inside-work-tree >/dev/null
           python -m py_compile bootstrap_assets.py task2_instagram_publisher.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          contract = json.loads(Path("task2_contract.json").read_text(encoding="utf-8"))
+          queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
+          expected_queue = [
+              "One Universe, Ever Expanding.png",
+              "One Universe, Expanding Forever.png",
+          ]
+          if contract.get("route") != "instagram_login":
+              raise SystemExit("TASK 2 HOLD — route contract mismatch")
+          if contract.get("graph_host") != "https://graph.instagram.com":
+              raise SystemExit("TASK 2 HOLD — graph host contract mismatch")
+          if contract.get("api_version") != "v24.0":
+              raise SystemExit("TASK 2 HOLD — API version contract mismatch")
+          if contract.get("target_username") != "jeffbrown3579":
+              raise SystemExit("TASK 2 HOLD — target username contract mismatch")
+          if contract.get("timezone") != "America/Phoenix":
+              raise SystemExit("TASK 2 HOLD — timezone contract mismatch")
+          if contract.get("slots") != {"09": "0 16 * * *", "15": "0 22 * * *"}:
+              raise SystemExit("TASK 2 HOLD — schedule contract mismatch")
+          if contract.get("queue") != expected_queue or queue != expected_queue:
+              raise SystemExit("TASK 2 HOLD — queue contract mismatch")
+          print("TASK 2 EXECUTION CONTRACT PASS")
+          PY
           echo "TASK 2 GITHUB AUTHORIZED PATH / CODE VALIDATION PASS"
 
       - name: Instagram authorization target and publishing-scope gate
