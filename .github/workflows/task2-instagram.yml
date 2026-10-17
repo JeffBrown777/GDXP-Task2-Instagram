@@ -37,7 +37,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install requests pillow
+      - run: pip install -r requirements.txt
 
       - name: Validate GitHub authorized path
         shell: bash
@@ -50,6 +50,7 @@ jobs:
           test -f queue.json
           test -f state.json
           test -f approved_source_assets.json
+          test -f requirements.txt
           git rev-parse --is-inside-work-tree >/dev/null
           python -m py_compile bootstrap_assets.py task2_instagram_publisher.py
           echo "TASK 2 GITHUB AUTHORIZED PATH / CODE VALIDATION PASS"
