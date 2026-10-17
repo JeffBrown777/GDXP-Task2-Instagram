@@ -255,9 +255,15 @@ except Exception:
 if receipt_time.astimezone(PHX).date() != now.date():
     fail(f"receipt PHX date mismatch: {receipt}")
 
-state["last_slot"] = slot_id
-state["next_index"] = (index + 1) % len(queue)
-state.setdefault("posted", []).append({
+posted = state.setdefault("posted", [])
+if not isinstance(posted, list):
+    fail("state posted field is not a list")
+if any(str(x.get("media_id") or "") == str(media_id) for x in posted if isinstance(x, dict)):
+    fail(f"media_id already exists in state history: {media_id}")
+if any(str(x.get("permalink") or "") == str(receipt.get("permalink") or "") for x in posted if isinstance(x, dict)):
+    fail("permalink already exists in state history")
+
+record = {
     "slot": slot_id,
     "filename": filename,
     "publish_asset": publish_filename,
@@ -266,7 +272,25 @@ state.setdefault("posted", []).append({
     "permalink": receipt.get("permalink"),
     "timestamp": receipt.get("timestamp"),
     "username": receipt.get("username"),
-})
-Path(STATE_PATH).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+}
+state["last_slot"] = slot_id
+state["next_index"] = (index + 1) % len(queue)
+posted.append(record)
+
+state_path = Path(STATE_PATH)
+tmp_path = state_path.with_name(state_path.name + ".tmp")
+with tmp_path.open("w", encoding="utf-8") as f:
+    f.write(json.dumps(state, indent=2) + "\n")
+    f.flush()
+    os.fsync(f.fileno())
+os.replace(tmp_path, state_path)
+
+verified_state = load_json(STATE_PATH, {})
+if verified_state.get("last_slot") != slot_id:
+    fail("atomic state verification failed after write")
+matches = [x for x in verified_state.get("posted", []) if isinstance(x, dict) and x.get("slot") == slot_id]
+if len(matches) != 1 or matches[0] != record:
+    fail("atomic state receipt verification failed after write")
+
 print("TASK 2 PASS")
-print(json.dumps(state["posted"][-1], indent=2))
+print(json.dumps(record, indent=2))
