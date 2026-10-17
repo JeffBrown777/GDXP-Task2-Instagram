@@ -49,6 +49,7 @@ jobs:
           test -f bootstrap_assets.py
           test -f queue.json
           test -f state.json
+          test -f approved_source_assets.json
           git rev-parse --is-inside-work-tree >/dev/null
           python -m py_compile bootstrap_assets.py task2_instagram_publisher.py
           echo "TASK 2 GITHUB AUTHORIZED PATH / CODE VALIDATION PASS"
@@ -120,22 +121,40 @@ jobs:
       - name: Resolve Task 2 lane
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            if [ "${{ github.event.schedule }}" = "0 16 * * *" ]; then
-              echo "TASK2_SLOT=09" >> "$GITHUB_ENV"
-            else
-              echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
-            fi
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.slot }}" ]; then
-            echo "TASK2_SLOT=${{ inputs.slot }}" >> "$GITHUB_ENV"
-          elif grep -Eqi '(9AM|09|9:00)' task2-trigger.txt 2>/dev/null; then
-            echo "TASK2_SLOT=09" >> "$GITHUB_ENV"
-          elif grep -Eqi '(3PM|15|3:00)' task2-trigger.txt 2>/dev/null; then
-            echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
-          else
-            echo "::error::TASK 2 HOLD — lane could not be resolved without guessing."
-            exit 1
-          fi
+          case "${{ github.event_name }}" in
+            schedule)
+              if [ "${{ github.event.schedule }}" = "0 16 * * *" ]; then
+                echo "TASK2_SLOT=09" >> "$GITHUB_ENV"
+              elif [ "${{ github.event.schedule }}" = "0 22 * * *" ]; then
+                echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
+              else
+                echo "::error::TASK 2 HOLD — unknown schedule lane."
+                exit 1
+              fi
+              ;;
+            workflow_dispatch)
+              if [ "${{ inputs.slot }}" = "09" ] || [ "${{ inputs.slot }}" = "15" ]; then
+                echo "TASK2_SLOT=${{ inputs.slot }}" >> "$GITHUB_ENV"
+              else
+                echo "::error::TASK 2 HOLD — workflow_dispatch slot must be explicit."
+                exit 1
+              fi
+              ;;
+            push)
+              if grep -Eqi '(9AM|09|9:00)' task2-trigger.txt 2>/dev/null; then
+                echo "TASK2_SLOT=09" >> "$GITHUB_ENV"
+              elif grep -Eqi '(3PM|15|3:00)' task2-trigger.txt 2>/dev/null; then
+                echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
+              else
+                echo "::error::TASK 2 HOLD — push trigger lane is not explicit."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::TASK 2 HOLD — unsupported workflow event."
+              exit 1
+              ;;
+          esac
 
       - name: Reconstruct approved PNG and Instagram JPEG transport assets
         run: python bootstrap_assets.py
@@ -150,10 +169,15 @@ jobs:
           from PIL import Image
 
           queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
+          approved = json.loads(Path("approved_source_assets.json").read_text(encoding="utf-8"))
           if not isinstance(queue, list) or len(queue) < 2 or len(set(queue)) != len(queue):
               raise SystemExit("TASK 2 HOLD — queue must contain at least two distinct approved PNG source assets")
+          if set(queue) != set(approved):
+              raise SystemExit("TASK 2 HOLD — queue does not exactly match approved source asset set")
 
           manifest = {}
+          source_hashes = set()
+          transport_hashes = set()
           for source_name in queue:
               if not source_name.lower().endswith(".png"):
                   raise SystemExit(f"TASK 2 HOLD — queued source is not PNG: {source_name}")
@@ -169,6 +193,17 @@ jobs:
                   raise SystemExit(f"TASK 2 HOLD — invalid PNG signature: {source}")
               if transport_bytes[:3] != b"\xff\xd8\xff":
                   raise SystemExit(f"TASK 2 HOLD — invalid JPEG signature: {transport}")
+              source_sha = hashlib.sha256(source_bytes).hexdigest()
+              transport_sha = hashlib.sha256(transport_bytes).hexdigest()
+              expected_source_sha = str((approved.get(source_name) or {}).get("source_sha256") or "").lower()
+              if len(expected_source_sha) != 64 or source_sha != expected_source_sha:
+                  raise SystemExit(f"TASK 2 HOLD — approved PNG source SHA-256 mismatch: {source_name}")
+              if source_sha in source_hashes:
+                  raise SystemExit(f"TASK 2 HOLD — duplicate approved PNG source bytes detected: {source_name}")
+              if transport_sha in transport_hashes:
+                  raise SystemExit(f"TASK 2 HOLD — duplicate Instagram transport bytes detected: {transport}")
+              source_hashes.add(source_sha)
+              transport_hashes.add(transport_sha)
               with Image.open(source) as s, Image.open(transport) as t:
                   sw, sh = s.size
                   tw, th = t.size
@@ -182,9 +217,9 @@ jobs:
                       raise SystemExit(f"TASK 2 HOLD — Instagram JPEG transport exceeds 8 MB: {transport}")
                   t.verify()
               manifest[source_name] = {
-                  "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+                  "source_sha256": source_sha,
                   "publish_asset": transport.name,
-                  "publish_sha256": hashlib.sha256(transport_bytes).hexdigest(),
+                  "publish_sha256": transport_sha,
               }
 
           Path("task2_asset_manifest.json").write_text(
