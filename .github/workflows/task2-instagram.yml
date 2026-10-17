@@ -91,8 +91,8 @@ jobs:
           if username != expected:
               raise SystemExit("TASK 2 HOLD — Instagram authorized target mismatch")
           account_type = str(p.get("account_type") or "").upper()
-          if account_type and account_type not in {"BUSINESS","MEDIA_CREATOR"}:
-              raise SystemExit("TASK 2 HOLD — Instagram target is not publish-capable professional account")
+          if account_type not in {"BUSINESS","MEDIA_CREATOR"}:
+              raise SystemExit("TASK 2 HOLD — Instagram account type missing or not publish-capable")
           ig_user_id = str(p.get("user_id") or p.get("id") or "").strip()
           if not ig_user_id:
               raise SystemExit("TASK 2 HOLD — Instagram authorized account id missing")
