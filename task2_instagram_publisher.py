@@ -19,14 +19,21 @@ ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN", "").strip()
 IMAGE_BASE_URL = os.getenv("IG_IMAGE_BASE_URL", "").strip().rstrip("/")
 EXPECTED_USERNAME = os.getenv("IG_EXPECTED_USERNAME", "jeffbrown3579").strip().lstrip("@").lower()
 IG_USER_ID = os.getenv("IG_USER_ID", "").strip()
+MEDIA_COMMIT = os.getenv("TASK2_MEDIA_COMMIT", "").strip().lower()
 
 missing = []
 if not ACCESS_TOKEN:
     missing.append("IG_ACCESS_TOKEN")
 if not IMAGE_BASE_URL:
     missing.append("IG_IMAGE_BASE_URL")
+if not MEDIA_COMMIT:
+    missing.append("TASK2_MEDIA_COMMIT")
 if missing:
     fail("missing required environment values: " + ", ".join(missing))
+if len(MEDIA_COMMIT) != 40 or any(ch not in "0123456789abcdef" for ch in MEDIA_COMMIT):
+    fail("TASK2_MEDIA_COMMIT must be a full 40-character Git commit SHA")
+if f"/{MEDIA_COMMIT}/instagram_media" not in IMAGE_BASE_URL:
+    fail("IG_IMAGE_BASE_URL is not pinned to TASK2_MEDIA_COMMIT")
 
 def api_post(path, data):
     url = f"{GRAPH_HOST}/{API_VERSION}/{path.lstrip('/')}"
@@ -189,7 +196,7 @@ seen_permalinks = set()
 for i, item in enumerate(posted_history):
     if not isinstance(item, dict):
         fail(f"state posted[{i}] must be an object")
-    required_history = ("slot", "filename", "publish_asset", "publish_sha256", "media_id", "permalink", "timestamp", "username")
+    required_history = ("slot", "filename", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username")
     missing_history = [k for k in required_history if not str(item.get(k, "")).strip()]
     if missing_history:
         fail(f"state posted[{i}] incomplete: " + ", ".join(missing_history))
@@ -205,6 +212,9 @@ for i, item in enumerate(posted_history):
         fail(f"state posted[{i}] transport asset mismatch")
     if item["publish_sha256"] != history_entry.get("publish_sha256"):
         fail(f"state posted[{i}] transport SHA-256 mismatch")
+    publish_commit = str(item.get("publish_commit") or "").lower()
+    if len(publish_commit) != 40 or any(ch not in "0123456789abcdef" for ch in publish_commit):
+        fail(f"state posted[{i}] publish commit invalid")
     if str(item["username"]).strip().lower() != EXPECTED_USERNAME:
         fail(f"state posted[{i}] username mismatch")
     if item["slot"] in seen_slots:
@@ -223,7 +233,7 @@ if state.get("last_slot") == slot_id:
     if len(matches) != 1:
         fail(f"state claims slot {slot_id} posted but does not contain exactly one receipt")
     receipt = matches[0]
-    required = ("filename", "publish_asset", "publish_sha256", "media_id", "permalink", "timestamp", "username")
+    required = ("filename", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username")
     missing = [k for k in required if not str(receipt.get(k, "")).strip()]
     if missing:
         fail("stored receipt is incomplete: " + ", ".join(missing))
@@ -239,6 +249,8 @@ if state.get("last_slot") == slot_id:
         fail("stored receipt transport asset mismatch")
     if receipt["publish_sha256"] != duplicate_entry.get("publish_sha256"):
         fail("stored receipt transport SHA-256 mismatch")
+    if str(receipt["publish_commit"]).lower() != MEDIA_COMMIT:
+        fail("stored receipt immutable media commit mismatch")
     expected_next = (queue.index(receipt["filename"]) + 1) % len(queue)
     if next_index_raw != expected_next:
         fail("stored receipt queue advancement mismatch")
@@ -294,7 +306,7 @@ if not creation_id:
     fail(f"no creation_id returned: {container}")
 
 status = None
-for _ in range(20):
+for attempt in range(5):
     status = api_get(creation_id, {
         "fields": "status_code,status",
         "access_token": ACCESS_TOKEN,
@@ -302,11 +314,14 @@ for _ in range(20):
     code = status.get("status_code")
     if code == "FINISHED":
         break
-    if code in {"ERROR", "EXPIRED"}:
-        fail(f"container failed: {status}")
-    time.sleep(3)
+    if code in {"ERROR", "EXPIRED", "PUBLISHED"}:
+        fail(f"container entered non-publishable terminal state: {status}")
+    if code != "IN_PROGRESS":
+        fail(f"container returned unknown status_code: {status}")
+    if attempt < 4:
+        time.sleep(60)
 else:
-    fail(f"container not ready after wait: {status}")
+    fail(f"container not ready after five one-minute status checks: {status}")
 
 published = api_post(f"{IG_USER_ID}/media_publish", {
     "creation_id": creation_id,
@@ -350,6 +365,7 @@ record = {
     "filename": filename,
     "publish_asset": publish_filename,
     "publish_sha256": publish_sha256,
+    "publish_commit": MEDIA_COMMIT,
     "media_id": media_id,
     "permalink": receipt.get("permalink"),
     "timestamp": receipt.get("timestamp"),
