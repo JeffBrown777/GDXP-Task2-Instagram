@@ -86,8 +86,16 @@ jobs:
               if transport.read_bytes()[:3] != b"\xff\xd8\xff":
                   raise SystemExit(f"TASK 2 HOLD — invalid JPEG signature: {transport}")
               with Image.open(source) as s, Image.open(transport) as t:
-                  if s.size != t.size:
-                      raise SystemExit(f"TASK 2 HOLD — source/transport dimension mismatch: {source_name}")
+                  sw, sh = s.size
+                  tw, th = t.size
+                  if tw < 320 or tw > 1440:
+                      raise SystemExit(f"TASK 2 HOLD — Instagram JPEG transport width out of range: {transport}")
+                  if tw / th < 0.8 or tw / th > 1.91:
+                      raise SystemExit(f"TASK 2 HOLD — Instagram JPEG transport aspect ratio out of range: {transport}")
+                  if abs((sw / sh) - (tw / th)) > 0.002:
+                      raise SystemExit(f"TASK 2 HOLD — source/transport aspect-ratio drift: {source_name}")
+                  if transport.stat().st_size > 8_000_000:
+                      raise SystemExit(f"TASK 2 HOLD — Instagram JPEG transport exceeds 8 MB: {transport}")
                   t.verify()
 
           print("TASK 2 SOURCE/TRANSPORT VALIDATION PASS")
