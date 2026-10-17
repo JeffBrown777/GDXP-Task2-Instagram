@@ -23,6 +23,8 @@ if CONTRACT.get("required_scopes") != [
     "instagram_business_content_publish",
 ]:
     raise SystemExit("TASK 2 HOLD: Task 2 Instagram publishing-scope contract mismatch")
+if CONTRACT.get("ai_generated_disclosure") is not True:
+    raise SystemExit("TASK 2 HOLD: Task 2 AI-generated disclosure contract mismatch")
 
 PHX = ZoneInfo(CONTRACT["timezone"])
 QUEUE_PATH = os.getenv("TASK2_QUEUE_PATH", "queue.json")
@@ -32,7 +34,7 @@ def fail(msg):
     print(f"TASK 2 HOLD: {msg}", file=sys.stderr)
     raise SystemExit(1)
 
-API_VERSION = os.getenv("IG_API_VERSION", "v24.0").strip() or "v24.0"
+API_VERSION = os.getenv("IG_API_VERSION", "v26.0").strip() or "v26.0"
 GRAPH_HOST = (os.getenv("IG_GRAPH_HOST", "https://graph.instagram.com").strip() or "https://graph.instagram.com").rstrip("/")
 ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN", "").strip()
 IMAGE_BASE_URL = os.getenv("IG_IMAGE_BASE_URL", "").strip().rstrip("/")
@@ -274,7 +276,7 @@ seen_permalinks = set()
 for i, item in enumerate(posted_history):
     if not isinstance(item, dict):
         fail(f"state posted[{i}] must be an object")
-    required_history = ("slot", "filename", "source_sha256", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username")
+    required_history = ("slot", "filename", "source_sha256", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username", "is_ai_generated")
     missing_history = [k for k in required_history if not str(item.get(k, "")).strip()]
     if missing_history:
         fail(f"state posted[{i}] incomplete: " + ", ".join(missing_history))
@@ -311,6 +313,8 @@ for i, item in enumerate(posted_history):
         fail(f"state posted[{i}] publish commit invalid")
     if str(item["username"]).strip().lower() != EXPECTED_USERNAME:
         fail(f"state posted[{i}] username mismatch")
+    if item.get("is_ai_generated") is not True:
+        fail(f"state posted[{i}] AI-generated disclosure mismatch")
     if item["slot"] in seen_slots:
         fail(f"duplicate slot in state history: {item['slot']}")
     if str(item["media_id"]) in seen_media_ids:
@@ -341,7 +345,7 @@ if matches:
     if len(matches) != 1:
         fail(f"slot {slot_id} does not contain exactly one receipt")
     receipt = matches[0]
-    required = ("filename", "source_sha256", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username")
+    required = ("filename", "source_sha256", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username", "is_ai_generated")
     missing = [k for k in required if not str(receipt.get(k, "")).strip()]
     if missing:
         fail("stored receipt is incomplete: " + ", ".join(missing))
@@ -380,8 +384,10 @@ if matches:
     verify_public_jpeg(stored_image_url, str(receipt["publish_sha256"]))
     if str(receipt.get("username", "")).strip().lower() != EXPECTED_USERNAME:
         fail(f"stored receipt username mismatch: {receipt.get('username')}")
+    if receipt.get("is_ai_generated") is not True:
+        fail("stored receipt AI-generated disclosure mismatch")
     live = api_get(str(receipt["media_id"]), {
-        "fields": "id,permalink,timestamp,media_type,username",
+        "fields": "id,permalink,timestamp,media_type,username,is_ai_generated",
         "access_token": ACCESS_TOKEN,
     })
     if str(live.get("id") or "") != str(receipt["media_id"]):
@@ -390,6 +396,8 @@ if matches:
         fail(f"stored receipt live username mismatch: {live}")
     if live.get("media_type") != "IMAGE":
         fail(f"stored receipt live media_type mismatch: {live}")
+    if live.get("is_ai_generated") is not True:
+        fail(f"stored receipt live AI-generated disclosure mismatch: {live}")
     if str(live.get("permalink") or "") != str(receipt["permalink"]):
         fail(f"stored receipt permalink mismatch: {live}")
     if str(live.get("timestamp") or "") != str(receipt["timestamp"]):
@@ -421,6 +429,7 @@ publish_sha256 = verify_public_jpeg(image_url, expected_publish_sha256)
 
 container = api_post(f"{IG_USER_ID}/media", {
     "image_url": image_url,
+    "is_ai_generated": "true",
     "access_token": ACCESS_TOKEN,
 })
 creation_id = str(container.get("id") or "").strip()
@@ -454,13 +463,15 @@ if not media_id or not media_id.isdigit():
     fail(f"no usable numeric media_id returned: {published}")
 
 receipt = api_get(media_id, {
-    "fields": "id,permalink,timestamp,media_type,username",
+    "fields": "id,permalink,timestamp,media_type,username,is_ai_generated",
     "access_token": ACCESS_TOKEN,
 })
 if str(receipt.get("id") or "").strip() != media_id:
     fail(f"receipt media id mismatch: {receipt}")
 if receipt.get("media_type") != "IMAGE":
     fail(f"receipt media_type is not IMAGE: {receipt}")
+if receipt.get("is_ai_generated") is not True:
+    fail(f"receipt AI-generated disclosure mismatch: {receipt}")
 if not str(receipt.get("username") or "").strip():
     fail(f"receipt missing username: {receipt}")
 if str(receipt.get("username")).strip().lower() != EXPECTED_USERNAME:
@@ -491,6 +502,7 @@ record = {
     "permalink": receipt.get("permalink"),
     "timestamp": receipt.get("timestamp"),
     "username": receipt.get("username"),
+    "is_ai_generated": True,
 }
 state["last_slot"] = slot_id
 state["next_index"] = (index + 1) % len(queue)
