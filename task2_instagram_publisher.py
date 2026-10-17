@@ -185,12 +185,27 @@ limit_rows = limit_payload.get("data") if isinstance(limit_payload, dict) else N
 if not isinstance(limit_rows, list) or len(limit_rows) != 1:
     fail(f"unexpected content publishing limit response: {limit_payload}")
 limit_row = limit_rows[0]
-quota_usage = int(limit_row.get("quota_usage", 0))
+try:
+    quota_usage = int(limit_row.get("quota_usage", 0))
+except Exception:
+    fail("Instagram publishing quota usage is invalid")
+if quota_usage < 0:
+    fail("Instagram publishing quota usage is negative")
 quota_config = limit_row.get("config") or {}
 quota_total = quota_config.get("quota_total")
-if quota_total is not None and quota_usage >= int(quota_total):
-    fail(f"Instagram publishing quota exhausted: {quota_usage}/{quota_total}")
-print(f"TASK 2 PUBLISHING QUOTA VERIFIED: {quota_usage}/{quota_total if quota_total is not None else 'runtime limit unavailable'}")
+if quota_total is not None:
+    try:
+        quota_total = int(quota_total)
+    except Exception:
+        fail("Instagram publishing quota total is invalid")
+    if quota_total <= 0:
+        fail("Instagram publishing quota total is non-positive")
+    if quota_usage >= quota_total:
+        fail(f"Instagram publishing quota exhausted: {quota_usage}/{quota_total}")
+print(
+    f"TASK 2 PUBLISHING QUOTA VERIFIED: "
+    f"{quota_usage}/{quota_total if quota_total is not None else 'runtime limit unavailable'}"
+)
 
 now = datetime.now(PHX)
 slot = resolve_slot()
