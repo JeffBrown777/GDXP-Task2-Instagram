@@ -50,7 +50,8 @@ jobs:
           test -f queue.json
           test -f state.json
           git rev-parse --is-inside-work-tree >/dev/null
-          echo "TASK 2 GITHUB AUTHORIZED PATH PASS"
+          python -m py_compile bootstrap_assets.py task2_instagram_publisher.py
+          echo "TASK 2 GITHUB AUTHORIZED PATH / CODE VALIDATION PASS"
 
       - name: Instagram authorization target and publishing-scope gate
         env:
