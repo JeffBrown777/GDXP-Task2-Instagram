@@ -37,7 +37,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install requests
+      - run: pip install requests pillow
 
       - name: Resolve Task 2 lane
         shell: bash
@@ -69,25 +69,25 @@ jobs:
           fi
           echo "TASK 2 AUTH READY"
 
-      - name: Reconstruct approved PNG assets if needed
+      - name: Reconstruct approved PNG and Instagram JPEG transport assets
         run: python bootstrap_assets.py
 
       - name: Publish reconstructed assets to raw GitHub if newly created
         run: |
-          if git status --porcelain -- png/ | grep -q .; then
+          if git status --porcelain -- png/ instagram_media/ | grep -q .; then
             git config user.name "gdxp-task2"
             git config user.email "gdxp-task2@users.noreply.github.com"
-            git add png/
-            git commit -m "Materialize approved Task 2 PNG assets"
+            git add png/ instagram_media/
+            git commit -m "Materialize approved Task 2 source and Instagram transport assets"
             git pull --rebase origin "${GITHUB_REF_NAME}"
             git push origin "HEAD:${GITHUB_REF_NAME}"
             sleep 15
           fi
 
-      - name: Publish next approved PNG
+      - name: Publish next approved PNG source via verified Instagram JPEG transport
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
-          IG_IMAGE_BASE_URL: https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/main/png
+          IG_IMAGE_BASE_URL: https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/main/instagram_media
           IG_API_VERSION: v24.0
           IG_GRAPH_HOST: https://graph.instagram.com
           IG_EXPECTED_USERNAME: jeffbrown3579
