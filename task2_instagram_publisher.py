@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, sys, time
+import hashlib, json, os, sys, time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -88,7 +88,7 @@ def load_json(path, default):
     except Exception as exc:
         fail(f"invalid JSON in {path}: {exc}")
 
-def verify_public_jpeg(url):
+def verify_public_jpeg(url, expected_sha256):
     try:
         r = requests.get(url, stream=True, timeout=60, allow_redirects=True)
     except Exception as exc:
@@ -98,12 +98,23 @@ def verify_public_jpeg(url):
     ctype = (r.headers.get("content-type") or "").lower()
     if "image/jpeg" not in ctype and "application/octet-stream" not in ctype:
         fail(f"JPEG preflight content-type is {ctype!r}")
+    digest = hashlib.sha256()
+    first = b""
     try:
-        first = next(r.iter_content(chunk_size=64), b"")
+        for chunk in r.iter_content(chunk_size=65536):
+            if not chunk:
+                continue
+            if not first:
+                first = chunk[:64]
+            digest.update(chunk)
     finally:
         r.close()
     if not first.startswith(b"\xff\xd8\xff"):
         fail("JPEG preflight signature verification failed")
+    actual_sha256 = digest.hexdigest()
+    if actual_sha256.lower() != expected_sha256.lower():
+        fail("public JPEG SHA-256 does not match validated transport artifact")
+    return actual_sha256
 
 def resolve_slot():
     explicit = os.getenv("TASK2_SLOT", "").strip()
@@ -145,7 +156,7 @@ if state.get("last_slot") == slot_id:
     if not matches:
         fail(f"state claims slot {slot_id} posted but no receipt exists")
     receipt = matches[-1]
-    required = ("filename", "media_id", "permalink", "timestamp", "username")
+    required = ("filename", "publish_asset", "publish_sha256", "media_id", "permalink", "timestamp", "username")
     missing = [k for k in required if not str(receipt.get(k, "")).strip()]
     if missing:
         fail("stored receipt is incomplete: " + ", ".join(missing))
@@ -161,8 +172,17 @@ if not filename.lower().endswith(".png"):
     fail(f"queued source asset is not a PNG: {filename}")
 
 publish_filename = Path(filename).with_suffix(".jpg").name
+manifest = load_json("task2_asset_manifest.json", {})
+entry = manifest.get(filename) if isinstance(manifest, dict) else None
+if not isinstance(entry, dict):
+    fail(f"validated asset manifest missing source entry: {filename}")
+if entry.get("publish_asset") != publish_filename:
+    fail(f"validated asset manifest transport mismatch: {filename}")
+expected_publish_sha256 = str(entry.get("publish_sha256") or "").strip()
+if len(expected_publish_sha256) != 64:
+    fail(f"validated asset manifest SHA-256 missing/invalid: {filename}")
 image_url = f"{IMAGE_BASE_URL}/{requests.utils.quote(publish_filename)}"
-verify_public_jpeg(image_url)
+publish_sha256 = verify_public_jpeg(image_url, expected_publish_sha256)
 
 container = api_post(f"{IG_USER_ID}/media", {
     "image_url": image_url,
@@ -220,6 +240,7 @@ state.setdefault("posted", []).append({
     "slot": slot_id,
     "filename": filename,
     "publish_asset": publish_filename,
+    "publish_sha256": publish_sha256,
     "media_id": media_id,
     "permalink": receipt.get("permalink"),
     "timestamp": receipt.get("timestamp"),
