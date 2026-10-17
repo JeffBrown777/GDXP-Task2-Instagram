@@ -75,7 +75,7 @@ def resolve_account():
         fail("configured IG_USER_ID does not match authenticated Instagram account")
     IG_USER_ID = resolved
     account_type = str(profile.get("account_type") or "").upper()
-    if account_type and account_type not in {"BUSINESS", "MEDIA_CREATOR", "CREATOR"}:
+    if account_type and account_type not in {"BUSINESS", "MEDIA_CREATOR"}:
         fail(f"Instagram account is not a publish-capable professional account: {account_type}")
     print(f"TASK 2 TARGET VERIFIED: @{username}")
 
