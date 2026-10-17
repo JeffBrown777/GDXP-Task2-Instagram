@@ -257,12 +257,26 @@ for i, item in enumerate(posted_history):
     seen_slots.add(item["slot"])
     seen_media_ids.add(str(item["media_id"]))
     seen_permalinks.add(str(item["permalink"]))
-if state.get("last_slot") is not None and state.get("last_slot") not in seen_slots:
-    fail("state last_slot does not reference a verified posted receipt")
-if state.get("last_slot") == slot_id:
-    matches = [x for x in state.get("posted", []) if x.get("slot") == slot_id]
+if posted_history:
+    if state.get("last_slot") != posted_history[-1].get("slot"):
+        fail("state last_slot does not match the most recent posted receipt")
+    last_receipt = posted_history[-1]
+    expected_next_after_last = (queue.index(last_receipt["filename"]) + 1) % len(queue)
+    if next_index_raw != expected_next_after_last:
+        fail("state next_index does not follow the most recent posted receipt")
+else:
+    if state.get("last_slot") is not None:
+        fail("state last_slot must be null when posted history is empty")
+    if next_index_raw != 0:
+        fail("state next_index must be 0 when posted history is empty")
+
+matches = [
+    x for x in posted_history
+    if isinstance(x, dict) and x.get("slot") == slot_id
+]
+if matches:
     if len(matches) != 1:
-        fail(f"state claims slot {slot_id} posted but does not contain exactly one receipt")
+        fail(f"slot {slot_id} does not contain exactly one receipt")
     receipt = matches[0]
     required = ("filename", "source_sha256", "publish_asset", "publish_sha256", "publish_commit", "media_id", "permalink", "timestamp", "username")
     missing = [k for k in required if not str(receipt.get(k, "")).strip()]
@@ -301,9 +315,6 @@ if state.get("last_slot") == slot_id:
         f"{requests.utils.quote(receipt['publish_asset'])}"
     )
     verify_public_jpeg(stored_image_url, str(receipt["publish_sha256"]))
-    expected_next = (queue.index(receipt["filename"]) + 1) % len(queue)
-    if next_index_raw != expected_next:
-        fail("stored receipt queue advancement mismatch")
     if str(receipt.get("username", "")).strip().lower() != EXPECTED_USERNAME:
         fail(f"stored receipt username mismatch: {receipt.get('username')}")
     live = api_get(str(receipt["media_id"]), {
