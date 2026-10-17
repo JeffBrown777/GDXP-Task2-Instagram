@@ -366,6 +366,7 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import hashlib
+          import hashlib
           import json
           import os
           import time
@@ -469,6 +470,7 @@ jobs:
           import os
           from datetime import datetime
           from pathlib import Path
+          from urllib.parse import quote
           from zoneinfo import ZoneInfo
 
           import requests
@@ -530,6 +532,7 @@ jobs:
           required = (
               "slot",
               "filename",
+              "source_sha256",
               "publish_asset",
               "publish_sha256",
               "publish_commit",
@@ -551,28 +554,90 @@ jobs:
                   "TASK 2 HOLD — receipt source asset not in approved queue"
               )
 
-          entry = manifest.get(receipt["filename"])
           approved_entry = approved.get(receipt["filename"])
-          if not isinstance(entry, dict) or not isinstance(approved_entry, dict):
+          if not isinstance(approved_entry, dict):
               raise SystemExit(
-                  "TASK 2 HOLD — receipt asset absent from approved artifact controls"
+                  "TASK 2 HOLD — receipt source absent from approved controls"
               )
-          if entry.get("source_sha256") != approved_entry.get("source_sha256"):
+
+          approved_source_sha = str(
+              approved_entry.get("source_sha256") or ""
+          ).strip().lower()
+          if str(receipt["source_sha256"]).strip().lower() != approved_source_sha:
               raise SystemExit(
-                  "TASK 2 HOLD — approved source SHA-256 mismatch at release"
+                  "TASK 2 HOLD — receipt approved source SHA-256 mismatch"
               )
-          if receipt["publish_asset"] != entry.get("publish_asset"):
+
+          expected_publish_asset = Path(receipt["filename"]).with_suffix(".jpg").name
+          if receipt["publish_asset"] != expected_publish_asset:
               raise SystemExit(
                   "TASK 2 HOLD — receipt transport artifact mismatch"
               )
-          if receipt["publish_sha256"] != entry.get("publish_sha256"):
+
+          receipt_publish_sha = str(receipt["publish_sha256"]).strip().lower()
+          if len(receipt_publish_sha) != 64 or any(
+              ch not in "0123456789abcdef" for ch in receipt_publish_sha
+          ):
               raise SystemExit(
-                  "TASK 2 HOLD — receipt transport SHA-256 mismatch"
+                  "TASK 2 HOLD — receipt transport SHA-256 invalid"
               )
-          if str(receipt["publish_commit"]).strip().lower() != media_commit:
+
+          receipt_commit = str(receipt["publish_commit"]).strip().lower()
+          if len(receipt_commit) != 40 or any(
+              ch not in "0123456789abcdef" for ch in receipt_commit
+          ):
               raise SystemExit(
-                  "TASK 2 HOLD — receipt immutable media commit mismatch"
+                  "TASK 2 HOLD — receipt immutable media commit invalid"
               )
+
+          source_url = (
+              "https://raw.githubusercontent.com/"
+              f"JeffBrown777/GDXP-Task2-Instagram/{receipt_commit}/png/"
+              f"{quote(receipt['filename'])}"
+          )
+          source_response = requests.get(
+              source_url, timeout=60, allow_redirects=True
+          )
+          if not source_response.ok:
+              raise SystemExit(
+                  f"TASK 2 HOLD — immutable receipt source HTTP {source_response.status_code}"
+              )
+          if not source_response.content.startswith(b"\x89PNG\r\n\x1a\n"):
+              raise SystemExit(
+                  "TASK 2 HOLD — immutable receipt source PNG signature mismatch"
+              )
+          if (
+              hashlib.sha256(source_response.content).hexdigest()
+              != approved_source_sha
+          ):
+              raise SystemExit(
+                  "TASK 2 HOLD — immutable receipt source SHA-256 mismatch"
+              )
+
+          transport_url = (
+              "https://raw.githubusercontent.com/"
+              f"JeffBrown777/GDXP-Task2-Instagram/{receipt_commit}/instagram_media/"
+              f"{quote(receipt['publish_asset'])}"
+          )
+          transport_response = requests.get(
+              transport_url, timeout=60, allow_redirects=True
+          )
+          if not transport_response.ok:
+              raise SystemExit(
+                  f"TASK 2 HOLD — immutable receipt transport HTTP {transport_response.status_code}"
+              )
+          if not transport_response.content.startswith(b"\xff\xd8\xff"):
+              raise SystemExit(
+                  "TASK 2 HOLD — immutable receipt transport JPEG signature mismatch"
+              )
+          if (
+              hashlib.sha256(transport_response.content).hexdigest()
+              != receipt_publish_sha
+          ):
+              raise SystemExit(
+                  "TASK 2 HOLD — immutable receipt transport SHA-256 mismatch"
+              )
+
           if str(receipt["username"]).strip().lower() != expected_username:
               raise SystemExit("TASK 2 HOLD — receipt account mismatch")
 
