@@ -150,6 +150,38 @@ if len(set(queue)) != len(queue):
     fail("queue.json contains duplicate source filenames.")
 
 state = load_json(STATE_PATH, {"last_slot": None, "next_index": 0, "posted": []})
+if not isinstance(state, dict):
+    fail("state.json root must be an object")
+posted_history = state.get("posted", [])
+if not isinstance(posted_history, list):
+    fail("state posted field must be a list")
+try:
+    next_index_raw = int(state.get("next_index", 0))
+except Exception:
+    fail("state next_index must be an integer")
+if next_index_raw < 0 or next_index_raw >= len(queue):
+    fail(f"state next_index out of range: {next_index_raw}")
+seen_slots = set()
+seen_media_ids = set()
+seen_permalinks = set()
+for i, item in enumerate(posted_history):
+    if not isinstance(item, dict):
+        fail(f"state posted[{i}] must be an object")
+    required_history = ("slot", "filename", "publish_asset", "publish_sha256", "media_id", "permalink", "timestamp", "username")
+    missing_history = [k for k in required_history if not str(item.get(k, "")).strip()]
+    if missing_history:
+        fail(f"state posted[{i}] incomplete: " + ", ".join(missing_history))
+    if item["slot"] in seen_slots:
+        fail(f"duplicate slot in state history: {item['slot']}")
+    if str(item["media_id"]) in seen_media_ids:
+        fail(f"duplicate media_id in state history: {item['media_id']}")
+    if str(item["permalink"]) in seen_permalinks:
+        fail(f"duplicate permalink in state history: {item['permalink']}")
+    seen_slots.add(item["slot"])
+    seen_media_ids.add(str(item["media_id"]))
+    seen_permalinks.add(str(item["permalink"]))
+if state.get("last_slot") is not None and state.get("last_slot") not in seen_slots:
+    fail("state last_slot does not reference a verified posted receipt")
 if state.get("last_slot") == slot_id:
     matches = [x for x in state.get("posted", []) if x.get("slot") == slot_id]
     if len(matches) != 1:
@@ -185,7 +217,7 @@ if state.get("last_slot") == slot_id:
     print(json.dumps(receipt, indent=2))
     raise SystemExit(0)
 
-index = int(state.get("next_index", 0)) % len(queue)
+index = next_index_raw
 filename = queue[index]
 if not filename.lower().endswith(".png"):
     fail(f"queued source asset is not a PNG: {filename}")
