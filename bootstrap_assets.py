@@ -27,5 +27,11 @@ for item in manifest:
                 rgb=bg.convert("RGB")
             else:
                 rgb=im.convert("RGB")
-            if rgb.width > 1440:\n                new_height = round(rgb.height * 1440 / rgb.width)\n                rgb = rgb.resize((1440, new_height), Image.Resampling.LANCZOS)\n            ratio = rgb.width / rgb.height\n            if ratio < 0.8 or ratio > 1.91:\n                raise SystemExit(f"Instagram transport aspect ratio out of range for {source}")\n            rgb.save(publish_path, format="JPEG", quality=95, subsampling=0, optimize=True)
+            if rgb.width > 1440:
+                new_height = round(rgb.height * 1440 / rgb.width)
+                rgb = rgb.resize((1440, new_height), Image.Resampling.LANCZOS)
+            ratio = rgb.width / rgb.height
+            if ratio < 0.8 or ratio > 1.91:
+                raise SystemExit(f"Instagram transport aspect ratio out of range for {source}")
+            rgb.save(publish_path, format="JPEG", quality=95, subsampling=0, optimize=True)
         print(f"created Instagram JPEG transport asset {publish_path} from approved source {source}")
