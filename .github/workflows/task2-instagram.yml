@@ -39,6 +39,19 @@ jobs:
 
       - run: pip install requests pillow
 
+      - name: Validate GitHub authorized path
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "JeffBrown777/GDXP-Task2-Instagram"
+          test "$GITHUB_REF_NAME" = "main"
+          test -f task2_instagram_publisher.py
+          test -f bootstrap_assets.py
+          test -f queue.json
+          test -f state.json
+          git rev-parse --is-inside-work-tree >/dev/null
+          echo "TASK 2 GITHUB AUTHORIZED PATH PASS"
+
       - name: Resolve Task 2 lane
         shell: bash
         run: |
@@ -55,18 +68,19 @@ jobs:
           elif grep -Eqi '(3PM|15|3:00)' task2-trigger.txt 2>/dev/null; then
             echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
           else
-            echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
+            echo "::error::TASK 2 HOLD — lane could not be resolved without guessing."
+            exit 1
           fi
 
       - name: Reconstruct approved PNG and Instagram JPEG transport assets
         run: python bootstrap_assets.py
 
-      - name: Validate approved source and Instagram transport assets
+      - name: Validate approved source and Instagram transport artifacts
         shell: bash
         run: |
           python -m py_compile bootstrap_assets.py task2_instagram_publisher.py
           python - <<'PY'
-          import json
+          import hashlib, json
           from pathlib import Path
           from PIL import Image
 
@@ -74,16 +88,21 @@ jobs:
           if not isinstance(queue, list) or len(queue) < 2 or len(set(queue)) != len(queue):
               raise SystemExit("TASK 2 HOLD — queue must contain at least two distinct approved PNG source assets")
 
+          manifest = {}
           for source_name in queue:
+              if not source_name.lower().endswith(".png"):
+                  raise SystemExit(f"TASK 2 HOLD — queued source is not PNG: {source_name}")
               source = Path("png") / source_name
               transport = Path("instagram_media") / Path(source_name).with_suffix(".jpg").name
               if not source.is_file():
                   raise SystemExit(f"TASK 2 HOLD — missing approved PNG source: {source}")
               if not transport.is_file():
                   raise SystemExit(f"TASK 2 HOLD — missing Instagram JPEG transport: {transport}")
-              if source.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
+              source_bytes = source.read_bytes()
+              transport_bytes = transport.read_bytes()
+              if source_bytes[:8] != b"\x89PNG\r\n\x1a\n":
                   raise SystemExit(f"TASK 2 HOLD — invalid PNG signature: {source}")
-              if transport.read_bytes()[:3] != b"\xff\xd8\xff":
+              if transport_bytes[:3] != b"\xff\xd8\xff":
                   raise SystemExit(f"TASK 2 HOLD — invalid JPEG signature: {transport}")
               with Image.open(source) as s, Image.open(transport) as t:
                   sw, sh = s.size
@@ -97,32 +116,72 @@ jobs:
                   if transport.stat().st_size > 8_000_000:
                       raise SystemExit(f"TASK 2 HOLD — Instagram JPEG transport exceeds 8 MB: {transport}")
                   t.verify()
+              manifest[source_name] = {
+                  "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+                  "publish_asset": transport.name,
+                  "publish_sha256": hashlib.sha256(transport_bytes).hexdigest(),
+              }
 
-          print("TASK 2 SOURCE/TRANSPORT VALIDATION PASS")
+          Path("task2_asset_manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print("TASK 2 SOURCE/TRANSPORT ARTIFACT GATE PASS")
           PY
 
-      - name: Publish reconstructed assets to raw GitHub if newly created
+      - name: Publish validated artifacts to raw GitHub
         run: |
-          if git status --porcelain -- png/ instagram_media/ | grep -q .; then
+          if git status --porcelain -- png/ instagram_media/ task2_asset_manifest.json | grep -q .; then
             git config user.name "gdxp-task2"
             git config user.email "gdxp-task2@users.noreply.github.com"
-            git add png/ instagram_media/
-            git commit -m "Materialize approved Task 2 source and Instagram transport assets"
+            git add png/ instagram_media/ task2_asset_manifest.json
+            git commit -m "Materialize validated Task 2 Instagram artifacts"
             git pull --rebase origin "${GITHUB_REF_NAME}"
             git push origin "HEAD:${GITHUB_REF_NAME}"
             sleep 15
           fi
 
-      - name: Instagram authorization gate
+      - name: Instagram authorization and target gate
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_API_VERSION: v24.0
+          IG_GRAPH_HOST: https://graph.instagram.com
+          IG_EXPECTED_USERNAME: jeffbrown3579
         shell: bash
         run: |
           if [ -z "$IG_ACCESS_TOKEN" ]; then
-            echo "::error::TASK 2 HOLD — IG_ACCESS_TOKEN is absent. Publication was not attempted."
+            echo "::error::TASK 2 HOLD — Instagram authorization unavailable."
             exit 1
           fi
-          echo "TASK 2 AUTH READY"
+          python - <<'PY'
+          import os, requests
+
+          token = os.environ["IG_ACCESS_TOKEN"]
+          host = os.environ["IG_GRAPH_HOST"].rstrip("/")
+          version = os.environ["IG_API_VERSION"]
+          expected = os.environ["IG_EXPECTED_USERNAME"].lower()
+          r = requests.get(
+              f"{host}/{version}/me",
+              params={"fields":"user_id,username,id,account_type","access_token":token},
+              timeout=60,
+          )
+          if not r.ok:
+              raise SystemExit(f"TASK 2 HOLD — Instagram authorization validation HTTP {r.status_code}")
+          p = r.json()
+          if isinstance(p.get("data"), list):
+              if len(p["data"]) != 1:
+                  raise SystemExit("TASK 2 HOLD — Instagram authorization returned ambiguous account set")
+              p = p["data"][0]
+          username = str(p.get("username") or "").strip().lstrip("@").lower()
+          if username != expected:
+              raise SystemExit("TASK 2 HOLD — Instagram authorized target mismatch")
+          account_type = str(p.get("account_type") or "").upper()
+          if account_type and account_type not in {"BUSINESS","MEDIA_CREATOR","CREATOR"}:
+              raise SystemExit("TASK 2 HOLD — Instagram target is not publish-capable professional account")
+          if not str(p.get("user_id") or p.get("id") or "").strip():
+              raise SystemExit("TASK 2 HOLD — Instagram authorized account id missing")
+          print("TASK 2 INSTAGRAM AUTHORIZED TARGET GATE PASS")
+          PY
 
       - name: Publish next approved PNG source via verified Instagram JPEG transport
         env:
@@ -134,7 +193,7 @@ jobs:
           TASK2_SLOT: ${{ env.TASK2_SLOT }}
         run: python task2_instagram_publisher.py
 
-      - name: Verify Instagram publication receipt
+      - name: Verify Instagram publication receipt and release gate
         env:
           TASK2_SLOT: ${{ env.TASK2_SLOT }}
         shell: bash
@@ -142,29 +201,46 @@ jobs:
           python - <<'PY'
           import json, os
           from datetime import datetime
+          from pathlib import Path
           from zoneinfo import ZoneInfo
 
           slot = os.environ["TASK2_SLOT"]
-          today = datetime.now(ZoneInfo("America/Phoenix")).date().isoformat()
-          slot_id = f"{today}-{slot}"
+          now = datetime.now(ZoneInfo("America/Phoenix"))
+          slot_id = f"{now.date().isoformat()}-{slot}"
+          state = json.loads(Path("state.json").read_text(encoding="utf-8"))
+          queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
+          manifest = json.loads(Path("task2_asset_manifest.json").read_text(encoding="utf-8"))
 
-          with open("state.json", "r", encoding="utf-8") as f:
-              state = json.load(f)
-
+          if state.get("last_slot") != slot_id:
+              raise SystemExit("TASK 2 HOLD — state last_slot does not match release lane")
           matches = [x for x in state.get("posted", []) if x.get("slot") == slot_id]
-          if not matches:
-              raise SystemExit(f"TASK 2 HOLD — no Instagram receipt recorded for {slot_id}")
+          if len(matches) != 1:
+              raise SystemExit("TASK 2 HOLD — release lane must have exactly one verified receipt")
 
-          receipt = matches[-1]
-          required = ("filename", "media_id", "permalink", "timestamp", "username")
+          receipt = matches[0]
+          required = ("slot","filename","publish_asset","publish_sha256","media_id","permalink","timestamp","username")
           missing = [k for k in required if not str(receipt.get(k, "")).strip()]
           if missing:
               raise SystemExit("TASK 2 HOLD — incomplete Instagram receipt: " + ", ".join(missing))
-
-          if str(receipt.get("username", "")).lower() != "jeffbrown3579":
+          if receipt["filename"] not in queue:
+              raise SystemExit("TASK 2 HOLD — receipt source asset not in approved queue")
+          entry = manifest.get(receipt["filename"])
+          if not isinstance(entry, dict):
+              raise SystemExit("TASK 2 HOLD — receipt asset absent from validated artifact manifest")
+          if receipt["publish_asset"] != entry.get("publish_asset"):
+              raise SystemExit("TASK 2 HOLD — receipt transport artifact mismatch")
+          if receipt["publish_sha256"] != entry.get("publish_sha256"):
+              raise SystemExit("TASK 2 HOLD — receipt transport SHA-256 mismatch")
+          if str(receipt["username"]).lower() != "jeffbrown3579":
               raise SystemExit("TASK 2 HOLD — receipt account mismatch")
+          try:
+              receipt_time = datetime.fromisoformat(str(receipt["timestamp"]).replace("Z","+00:00"))
+          except Exception:
+              raise SystemExit("TASK 2 HOLD — receipt timestamp invalid")
+          if receipt_time.astimezone(ZoneInfo("America/Phoenix")).date() != now.date():
+              raise SystemExit("TASK 2 HOLD — receipt PHX date mismatch")
 
-          print("TASK 2 VERIFIED INSTAGRAM RECEIPT")
+          print("TASK 2 VERIFIED INSTAGRAM RECEIPT / RELEASE GATE PASS")
           print(json.dumps(receipt, indent=2))
           PY
 
@@ -176,7 +252,7 @@ jobs:
           git config user.name "gdxp-task2"
           git config user.email "gdxp-task2@users.noreply.github.com"
           git add state.json
-          git commit -m "Task 2 Instagram receipt state"
+          git commit -m "Task 2 Instagram verified receipt state"
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
