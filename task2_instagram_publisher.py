@@ -18,6 +18,11 @@ if CONTRACT.get("route") != "instagram_login":
     raise SystemExit("TASK 2 HOLD: Task 2 route contract mismatch")
 if CONTRACT.get("timezone") != "America/Phoenix":
     raise SystemExit("TASK 2 HOLD: Task 2 timezone contract mismatch")
+if CONTRACT.get("required_scopes") != [
+    "instagram_business_basic",
+    "instagram_business_content_publish",
+]:
+    raise SystemExit("TASK 2 HOLD: Task 2 Instagram publishing-scope contract mismatch")
 
 PHX = ZoneInfo(CONTRACT["timezone"])
 QUEUE_PATH = os.getenv("TASK2_QUEUE_PATH", "queue.json")
