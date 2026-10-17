@@ -5,7 +5,20 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 import requests
 
-PHX = ZoneInfo("America/Phoenix")
+CONTRACT_PATH = Path("task2_contract.json")
+if not CONTRACT_PATH.is_file():
+    raise SystemExit("TASK 2 HOLD: task2_contract.json is missing")
+try:
+    CONTRACT = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+except Exception as exc:
+    raise SystemExit(f"TASK 2 HOLD: invalid task2_contract.json: {exc}")
+
+if CONTRACT.get("route") != "instagram_login":
+    raise SystemExit("TASK 2 HOLD: Task 2 route contract mismatch")
+if CONTRACT.get("timezone") != "America/Phoenix":
+    raise SystemExit("TASK 2 HOLD: Task 2 timezone contract mismatch")
+
+PHX = ZoneInfo(CONTRACT["timezone"])
 QUEUE_PATH = os.getenv("TASK2_QUEUE_PATH", "queue.json")
 STATE_PATH = os.getenv("TASK2_STATE_PATH", "state.json")
 
@@ -20,6 +33,16 @@ IMAGE_BASE_URL = os.getenv("IG_IMAGE_BASE_URL", "").strip().rstrip("/")
 EXPECTED_USERNAME = os.getenv("IG_EXPECTED_USERNAME", "jeffbrown3579").strip().lstrip("@").lower()
 IG_USER_ID = os.getenv("IG_USER_ID", "").strip()
 MEDIA_COMMIT = os.getenv("TASK2_MEDIA_COMMIT", "").strip().lower()
+
+contract_host = str(CONTRACT.get("graph_host") or "").rstrip("/")
+contract_version = str(CONTRACT.get("api_version") or "").strip()
+contract_username = str(CONTRACT.get("target_username") or "").strip().lstrip("@").lower()
+if GRAPH_HOST != contract_host:
+    fail("Instagram graph host does not match Task 2 contract")
+if API_VERSION != contract_version:
+    fail("Instagram API version does not match Task 2 contract")
+if EXPECTED_USERNAME != contract_username:
+    fail("Instagram target username does not match Task 2 contract")
 
 missing = []
 if not ACCESS_TOKEN:
@@ -125,9 +148,12 @@ def verify_public_jpeg(url, expected_sha256):
 
 def resolve_slot():
     explicit = os.getenv("TASK2_SLOT", "").strip()
-    if explicit in {"09", "15"}:
+    slots = CONTRACT.get("slots")
+    if not isinstance(slots, dict) or set(slots) != {"09", "15"}:
+        fail("Task 2 slot contract is invalid")
+    if explicit in slots:
         return explicit
-    fail("TASK2_SLOT must be explicitly set to 09 or 15; refusing to guess the lane")
+    fail("TASK2_SLOT must exactly match a contracted Task 2 lane")
 
 resolve_account()
 
@@ -151,8 +177,11 @@ slot = resolve_slot()
 slot_id = f"{now.date().isoformat()}-{slot}"
 
 queue = load_json(QUEUE_PATH, [])
-if not isinstance(queue, list) or len(queue) < 2:
-    fail("queue.json must contain at least two distinct approved PNG source filenames.")
+contract_queue = CONTRACT.get("queue")
+if not isinstance(contract_queue, list) or not contract_queue:
+    fail("Task 2 contract queue is invalid")
+if queue != contract_queue:
+    fail("queue.json order/content does not exactly match Task 2 contract")
 if len(set(queue)) != len(queue):
     fail("queue.json contains duplicate source filenames.")
 
