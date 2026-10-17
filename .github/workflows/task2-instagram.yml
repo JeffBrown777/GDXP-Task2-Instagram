@@ -28,6 +28,7 @@ jobs:
   task2:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -37,9 +38,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install -r requirements.txt
+      - name: Install pinned Task 2 dependencies
+        run: pip install -r requirements.txt
 
-      - name: Validate GitHub authorized path
+      - name: Validate GitHub authorized path and code
         shell: bash
         run: |
           set -euo pipefail
@@ -50,6 +52,7 @@ jobs:
           test -f queue.json
           test -f state.json
           test -f approved_source_assets.json
+          test -f assets_b64/manifest.json
           test -f requirements.txt
           git rev-parse --is-inside-work-tree >/dev/null
           python -m py_compile bootstrap_assets.py task2_instagram_publisher.py
@@ -63,58 +66,83 @@ jobs:
           IG_EXPECTED_USERNAME: jeffbrown3579
         shell: bash
         run: |
+          set -euo pipefail
           if [ -z "$IG_ACCESS_TOKEN" ]; then
             echo "::error::TASK 2 HOLD — Instagram authorization unavailable."
             exit 1
           fi
           python - <<'PY'
-          import os, requests
+          import os
+          import requests
 
-          token = os.environ["IG_ACCESS_TOKEN"]
+          token = os.environ["IG_ACCESS_TOKEN"].strip()
           host = os.environ["IG_GRAPH_HOST"].rstrip("/")
-          version = os.environ["IG_API_VERSION"]
-          expected = os.environ["IG_EXPECTED_USERNAME"].lower()
+          version = os.environ["IG_API_VERSION"].strip()
+          expected = os.environ["IG_EXPECTED_USERNAME"].strip().lstrip("@").lower()
 
           r = requests.get(
               f"{host}/{version}/me",
-              params={"fields":"user_id,username,id,account_type","access_token":token},
+              params={
+                  "fields": "user_id,username,id,account_type",
+                  "access_token": token,
+              },
               timeout=60,
           )
           if not r.ok:
-              raise SystemExit(f"TASK 2 HOLD — Instagram authorization validation HTTP {r.status_code}")
-          p = r.json()
-          if isinstance(p.get("data"), list):
-              if len(p["data"]) != 1:
-                  raise SystemExit("TASK 2 HOLD — Instagram authorization returned ambiguous account set")
-              p = p["data"][0]
+              raise SystemExit(
+                  f"TASK 2 HOLD — Instagram authorization validation HTTP {r.status_code}"
+              )
 
-          username = str(p.get("username") or "").strip().lstrip("@").lower()
+          profile = r.json()
+          if isinstance(profile.get("data"), list):
+              if len(profile["data"]) != 1:
+                  raise SystemExit(
+                      "TASK 2 HOLD — Instagram authorization returned ambiguous account set"
+                  )
+              profile = profile["data"][0]
+
+          username = str(profile.get("username") or "").strip().lstrip("@").lower()
           if username != expected:
               raise SystemExit("TASK 2 HOLD — Instagram authorized target mismatch")
-          account_type = str(p.get("account_type") or "").upper()
-          if account_type not in {"BUSINESS","MEDIA_CREATOR"}:
-              raise SystemExit("TASK 2 HOLD — Instagram account type missing or not publish-capable")
-          ig_user_id = str(p.get("user_id") or p.get("id") or "").strip()
+
+          account_type = str(profile.get("account_type") or "").strip().upper()
+          if account_type not in {"BUSINESS", "MEDIA_CREATOR"}:
+              raise SystemExit(
+                  "TASK 2 HOLD — Instagram account type missing or not publish-capable"
+              )
+
+          ig_user_id = str(profile.get("user_id") or profile.get("id") or "").strip()
           if not ig_user_id:
               raise SystemExit("TASK 2 HOLD — Instagram authorized account id missing")
 
           q = requests.get(
               f"{host}/{version}/{ig_user_id}/content_publishing_limit",
-              params={"fields":"quota_usage,config","access_token":token},
+              params={
+                  "fields": "quota_usage,config",
+                  "access_token": token,
+              },
               timeout=60,
           )
           if not q.ok:
-              raise SystemExit(f"TASK 2 HOLD — Instagram publishing-scope/quota validation HTTP {q.status_code}")
+              raise SystemExit(
+                  f"TASK 2 HOLD — Instagram publishing-scope/quota validation HTTP {q.status_code}"
+              )
+
           payload = q.json()
           rows = payload.get("data") if isinstance(payload, dict) else None
           if not isinstance(rows, list) or len(rows) != 1:
-              raise SystemExit("TASK 2 HOLD — Instagram publishing-scope/quota response invalid")
+              raise SystemExit(
+                  "TASK 2 HOLD — Instagram publishing-scope/quota response invalid"
+              )
+
           row = rows[0]
           usage = int(row.get("quota_usage", 0))
           config = row.get("config") or {}
           total = config.get("quota_total")
           if total is not None and usage >= int(total):
-              raise SystemExit(f"TASK 2 HOLD — Instagram publishing quota exhausted: {usage}/{total}")
+              raise SystemExit(
+                  f"TASK 2 HOLD — Instagram publishing quota exhausted: {usage}/{total}"
+              )
 
           print("TASK 2 INSTAGRAM AUTHORIZED TARGET / PUBLISHING-SCOPE GATE PASS")
           PY
@@ -122,6 +150,7 @@ jobs:
       - name: Resolve Task 2 lane
         shell: bash
         run: |
+          set -euo pipefail
           case "${{ github.event_name }}" in
             schedule)
               if [ "${{ github.event.schedule }}" = "0 16 * * *" ]; then
@@ -142,9 +171,9 @@ jobs:
               fi
               ;;
             push)
-              if grep -Eqi '(9AM|09|9:00)' task2-trigger.txt 2>/dev/null; then
+              if grep -Eqi '(^|[^[:alnum:]])9AM([^[:alnum:]]|$)|(^|[^[:alnum:]])09([^[:alnum:]]|$)|9:00' task2-trigger.txt; then
                 echo "TASK2_SLOT=09" >> "$GITHUB_ENV"
-              elif grep -Eqi '(3PM|15|3:00)' task2-trigger.txt 2>/dev/null; then
+              elif grep -Eqi '(^|[^[:alnum:]])3PM([^[:alnum:]]|$)|(^|[^[:alnum:]])15([^[:alnum:]]|$)|3:00' task2-trigger.txt; then
                 echo "TASK2_SLOT=15" >> "$GITHUB_ENV"
               else
                 echo "::error::TASK 2 HOLD — push trigger lane is not explicit."
@@ -163,83 +192,131 @@ jobs:
       - name: Validate approved source and Instagram transport artifacts
         shell: bash
         run: |
-          python -m py_compile bootstrap_assets.py task2_instagram_publisher.py
+          set -euo pipefail
           python - <<'PY'
-          import hashlib, json
+          import hashlib
+          import json
           from pathlib import Path
+
           from PIL import Image
 
           queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
-          approved = json.loads(Path("approved_source_assets.json").read_text(encoding="utf-8"))
-          if not isinstance(queue, list) or len(queue) < 2 or len(set(queue)) != len(queue):
-              raise SystemExit("TASK 2 HOLD — queue must contain at least two distinct approved PNG source assets")
-          if set(queue) != set(approved):
-              raise SystemExit("TASK 2 HOLD — queue does not exactly match approved source asset set")
+          approved = json.loads(
+              Path("approved_source_assets.json").read_text(encoding="utf-8")
+          )
 
-          manifest = {}
+          if (
+              not isinstance(queue, list)
+              or len(queue) < 2
+              or len(set(queue)) != len(queue)
+          ):
+              raise SystemExit(
+                  "TASK 2 HOLD — queue must contain distinct approved PNG source assets"
+              )
+          if not isinstance(approved, dict) or set(queue) != set(approved):
+              raise SystemExit(
+                  "TASK 2 HOLD — queue does not exactly match approved source asset set"
+              )
+
+          artifact_manifest = {}
           source_hashes = set()
           transport_hashes = set()
+
           for source_name in queue:
-              if not source_name.lower().endswith(".png"):
-                  raise SystemExit(f"TASK 2 HOLD — queued source is not PNG: {source_name}")
+              if not isinstance(source_name, str) or not source_name.lower().endswith(".png"):
+                  raise SystemExit(
+                      f"TASK 2 HOLD — queued source is not an approved PNG: {source_name}"
+                  )
+
               source = Path("png") / source_name
-              transport = Path("instagram_media") / Path(source_name).with_suffix(".jpg").name
+              transport = (
+                  Path("instagram_media")
+                  / Path(source_name).with_suffix(".jpg").name
+              )
+
               if not source.is_file():
                   raise SystemExit(f"TASK 2 HOLD — missing approved PNG source: {source}")
               if not transport.is_file():
-                  raise SystemExit(f"TASK 2 HOLD — missing Instagram JPEG transport: {transport}")
+                  raise SystemExit(
+                      f"TASK 2 HOLD — missing Instagram JPEG transport: {transport}"
+                  )
+
               source_bytes = source.read_bytes()
               transport_bytes = transport.read_bytes()
-              if source_bytes[:8] != b"\x89PNG\r\n\x1a\n":
+
+              if not source_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
                   raise SystemExit(f"TASK 2 HOLD — invalid PNG signature: {source}")
-              if transport_bytes[:3] != b"\xff\xd8\xff":
+              if not transport_bytes.startswith(b"\xff\xd8\xff"):
                   raise SystemExit(f"TASK 2 HOLD — invalid JPEG signature: {transport}")
+
               source_sha = hashlib.sha256(source_bytes).hexdigest()
               transport_sha = hashlib.sha256(transport_bytes).hexdigest()
-              expected_source_sha = str((approved.get(source_name) or {}).get("source_sha256") or "").lower()
+              expected_source_sha = str(
+                  (approved.get(source_name) or {}).get("source_sha256") or ""
+              ).strip().lower()
+
               if len(expected_source_sha) != 64 or source_sha != expected_source_sha:
-                  raise SystemExit(f"TASK 2 HOLD — approved PNG source SHA-256 mismatch: {source_name}")
+                  raise SystemExit(
+                      f"TASK 2 HOLD — approved PNG source SHA-256 mismatch: {source_name}"
+                  )
               if source_sha in source_hashes:
-                  raise SystemExit(f"TASK 2 HOLD — duplicate approved PNG source bytes detected: {source_name}")
+                  raise SystemExit(
+                      f"TASK 2 HOLD — duplicate approved PNG source bytes: {source_name}"
+                  )
               if transport_sha in transport_hashes:
-                  raise SystemExit(f"TASK 2 HOLD — duplicate Instagram transport bytes detected: {transport}")
+                  raise SystemExit(
+                      f"TASK 2 HOLD — duplicate Instagram transport bytes: {transport}"
+                  )
+
               source_hashes.add(source_sha)
               transport_hashes.add(transport_sha)
-              with Image.open(source) as s, Image.open(transport) as t:
-                  sw, sh = s.size
-                  tw, th = t.size
+
+              with Image.open(source) as source_image, Image.open(transport) as transport_image:
+                  sw, sh = source_image.size
+                  tw, th = transport_image.size
+
                   if tw < 320 or tw > 1440:
-                      raise SystemExit(f"TASK 2 HOLD — Instagram JPEG transport width out of range: {transport}")
+                      raise SystemExit(
+                          f"TASK 2 HOLD — Instagram JPEG transport width out of range: {transport}"
+                      )
                   if tw / th < 0.8 or tw / th > 1.91:
-                      raise SystemExit(f"TASK 2 HOLD — Instagram JPEG transport aspect ratio out of range: {transport}")
+                      raise SystemExit(
+                          f"TASK 2 HOLD — Instagram JPEG transport aspect ratio out of range: {transport}"
+                      )
                   if abs((sw / sh) - (tw / th)) > 0.002:
-                      raise SystemExit(f"TASK 2 HOLD — source/transport aspect-ratio drift: {source_name}")
+                      raise SystemExit(
+                          f"TASK 2 HOLD — source/transport aspect-ratio drift: {source_name}"
+                      )
                   if transport.stat().st_size > 8_000_000:
-                      raise SystemExit(f"TASK 2 HOLD — Instagram JPEG transport exceeds 8 MB: {transport}")
-                  t.verify()
-              manifest[source_name] = {
+                      raise SystemExit(
+                          f"TASK 2 HOLD — Instagram JPEG transport exceeds 8 MB: {transport}"
+                      )
+                  transport_image.verify()
+
+              artifact_manifest[source_name] = {
                   "source_sha256": source_sha,
                   "publish_asset": transport.name,
                   "publish_sha256": transport_sha,
               }
 
           Path("task2_asset_manifest.json").write_text(
-              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              json.dumps(artifact_manifest, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
           print("TASK 2 SOURCE/TRANSPORT ARTIFACT GATE PASS")
           PY
 
       - name: Publish validated artifacts to raw GitHub
+        shell: bash
         run: |
+          set -euo pipefail
           if git status --porcelain -- png/ instagram_media/ task2_asset_manifest.json | grep -q .; then
             git config user.name "gdxp-task2"
             git config user.email "gdxp-task2@users.noreply.github.com"
             git add png/ instagram_media/ task2_asset_manifest.json
             git commit -m "Materialize validated Task 2 Instagram artifacts"
-            git pull --rebase origin "${GITHUB_REF_NAME}"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-            sleep 15
+            git pull --rebase origin "$GITHUB_REF_NAME"
+            git push origin "HEAD:$GITHUB_REF_NAME"
           fi
 
       - name: Freeze immutable media commit
@@ -247,44 +324,95 @@ jobs:
         run: |
           set -euo pipefail
           media_commit="$(git rev-parse HEAD)"
-          if ! printf '%s' "$media_commit" | grep -Eq '^[0-9a-f]{40}      - name: Validate public Instagram transport path
+          if ! printf '%s' "$media_commit" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::TASK 2 HOLD — immutable media commit is invalid."
+            exit 1
+          fi
+          echo "TASK2_MEDIA_COMMIT=$media_commit" >> "$GITHUB_ENV"
+          echo "TASK 2 IMMUTABLE MEDIA COMMIT PINNED"
+
+      - name: Validate public Instagram transport path
         env:
           TASK2_MEDIA_COMMIT: ${{ env.TASK2_MEDIA_COMMIT }}
         shell: bash
         run: |
+          set -euo pipefail
           python - <<'PY'
-          import hashlib, json, os
+          import hashlib
+          import json
+          import os
+          import time
           from pathlib import Path
           from urllib.parse import quote
+
           import requests
 
-          manifest = json.loads(Path("task2_asset_manifest.json").read_text(encoding="utf-8"))
-          queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
           media_commit = os.environ["TASK2_MEDIA_COMMIT"].strip().lower()
-          if len(media_commit) != 40 or any(ch not in "0123456789abcdef" for ch in media_commit):
-              raise SystemExit("TASK 2 HOLD — immutable media commit invalid at public-path gate")
-          base = f"https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/{media_commit}/instagram_media"
+          if len(media_commit) != 40 or any(
+              ch not in "0123456789abcdef" for ch in media_commit
+          ):
+              raise SystemExit(
+                  "TASK 2 HOLD — immutable media commit invalid at public-path gate"
+              )
+
+          manifest = json.loads(
+              Path("task2_asset_manifest.json").read_text(encoding="utf-8")
+          )
+          queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
+          base = (
+              "https://raw.githubusercontent.com/"
+              f"JeffBrown777/GDXP-Task2-Instagram/{media_commit}/instagram_media"
+          )
+
           for source_name in queue:
               entry = manifest.get(source_name)
               if not isinstance(entry, dict):
-                  raise SystemExit(f"TASK 2 HOLD — public-path manifest entry missing: {source_name}")
+                  raise SystemExit(
+                      f"TASK 2 HOLD — public-path manifest entry missing: {source_name}"
+                  )
+
               publish_asset = str(entry.get("publish_asset") or "")
-              expected_sha = str(entry.get("publish_sha256") or "").lower()
+              expected_sha = str(entry.get("publish_sha256") or "").strip().lower()
               if not publish_asset or len(expected_sha) != 64:
-                  raise SystemExit(f"TASK 2 HOLD — public-path manifest incomplete: {source_name}")
+                  raise SystemExit(
+                      f"TASK 2 HOLD — public-path manifest incomplete: {source_name}"
+                  )
+
               url = f"{base}/{quote(publish_asset)}"
-              r = requests.get(url, timeout=60, allow_redirects=True)
-              if not r.ok:
-                  raise SystemExit(f"TASK 2 HOLD — public Instagram transport HTTP {r.status_code}: {publish_asset}")
-              ctype = (r.headers.get("content-type") or "").lower()
-              if "image/jpeg" not in ctype and "application/octet-stream" not in ctype:
-                  raise SystemExit(f"TASK 2 HOLD — public Instagram transport MIME mismatch: {publish_asset}")
-              if not r.content.startswith(b"\xff\xd8\xff"):
-                  raise SystemExit(f"TASK 2 HOLD — public Instagram transport JPEG signature mismatch: {publish_asset}")
-              actual_sha = hashlib.sha256(r.content).hexdigest()
+              response = None
+              for attempt in range(5):
+                  response = requests.get(url, timeout=60, allow_redirects=True)
+                  if response.ok:
+                      break
+                  if attempt < 4:
+                      time.sleep(5)
+
+              if response is None or not response.ok:
+                  status = response.status_code if response is not None else "NO_RESPONSE"
+                  raise SystemExit(
+                      f"TASK 2 HOLD — public Instagram transport HTTP {status}: {publish_asset}"
+                  )
+
+              content_type = (response.headers.get("content-type") or "").lower()
+              if (
+                  "image/jpeg" not in content_type
+                  and "application/octet-stream" not in content_type
+              ):
+                  raise SystemExit(
+                      f"TASK 2 HOLD — public Instagram transport MIME mismatch: {publish_asset}"
+                  )
+              if not response.content.startswith(b"\xff\xd8\xff"):
+                  raise SystemExit(
+                      f"TASK 2 HOLD — public Instagram transport JPEG signature mismatch: {publish_asset}"
+                  )
+
+              actual_sha = hashlib.sha256(response.content).hexdigest()
               if actual_sha != expected_sha:
-                  raise SystemExit(f"TASK 2 HOLD — public Instagram transport SHA-256 mismatch: {publish_asset}")
-          print("TASK 2 PUBLIC INSTAGRAM TRANSPORT PATH GATE PASS")
+                  raise SystemExit(
+                      f"TASK 2 HOLD — public Instagram transport SHA-256 mismatch: {publish_asset}"
+                  )
+
+          print("TASK 2 PUBLIC IMMUTABLE INSTAGRAM TRANSPORT PATH GATE PASS")
           PY
 
       - name: Publish next approved PNG source via verified Instagram JPEG transport
@@ -301,256 +429,176 @@ jobs:
       - name: Verify Instagram publication receipt and release gate
         env:
           TASK2_SLOT: ${{ env.TASK2_SLOT }}
+          TASK2_MEDIA_COMMIT: ${{ env.TASK2_MEDIA_COMMIT }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           IG_API_VERSION: v24.0
           IG_GRAPH_HOST: https://graph.instagram.com
           IG_EXPECTED_USERNAME: jeffbrown3579
-          TASK2_MEDIA_COMMIT: ${{ env.TASK2_MEDIA_COMMIT }}
         shell: bash
         run: |
+          set -euo pipefail
           python - <<'PY'
-          import json, os, requests
+          import json
+          import os
           from datetime import datetime
           from pathlib import Path
           from zoneinfo import ZoneInfo
 
-          slot = os.environ["TASK2_SLOT"]
-          token = os.environ["IG_ACCESS_TOKEN"].strip()
-          version = os.environ["IG_API_VERSION"]
-          host = os.environ["IG_GRAPH_HOST"].rstrip("/")
-          expected_username = os.environ["IG_EXPECTED_USERNAME"].strip().lower()
-          media_commit = os.environ["TASK2_MEDIA_COMMIT"].strip().lower()
-          if len(media_commit) != 40 or any(ch not in "0123456789abcdef" for ch in media_commit):
-              raise SystemExit("TASK 2 HOLD — immutable media commit invalid at release gate")
-          if not token:
-              raise SystemExit("TASK 2 HOLD — release-gate Instagram authorization unavailable")
-
-          now = datetime.now(ZoneInfo("America/Phoenix"))
-          slot_id = f"{now.date().isoformat()}-{slot}"
-          state = json.loads(Path("state.json").read_text(encoding="utf-8"))
-          queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
-          manifest = json.loads(Path("task2_asset_manifest.json").read_text(encoding="utf-8"))
-          approved = json.loads(Path("approved_source_assets.json").read_text(encoding="utf-8"))
-
-          if state.get("last_slot") != slot_id:
-              raise SystemExit("TASK 2 HOLD — state last_slot does not match release lane")
-          posted = state.get("posted", [])
-          if not isinstance(posted, list):
-              raise SystemExit("TASK 2 HOLD — release state posted field invalid")
-          matches = [x for x in posted if isinstance(x, dict) and x.get("slot") == slot_id]
-          if len(matches) != 1:
-              raise SystemExit("TASK 2 HOLD — release lane must have exactly one verified receipt")
-
-          receipt = matches[0]
-          required = ("slot","filename","publish_asset","publish_sha256","publish_commit","media_id","permalink","timestamp","username")
-          missing = [k for k in required if not str(receipt.get(k, "")).strip()]
-          if missing:
-              raise SystemExit("TASK 2 HOLD — incomplete Instagram receipt: " + ", ".join(missing))
-          if receipt["filename"] not in queue:
-              raise SystemExit("TASK 2 HOLD — receipt source asset not in approved queue")
-
-          entry = manifest.get(receipt["filename"])
-          approved_entry = approved.get(receipt["filename"])
-          if not isinstance(entry, dict) or not isinstance(approved_entry, dict):
-              raise SystemExit("TASK 2 HOLD — receipt asset absent from approved artifact controls")
-          if entry.get("source_sha256") != approved_entry.get("source_sha256"):
-              raise SystemExit("TASK 2 HOLD — approved source SHA-256 mismatch at release")
-          if receipt["publish_asset"] != entry.get("publish_asset"):
-              raise SystemExit("TASK 2 HOLD — receipt transport artifact mismatch")
-          if receipt["publish_sha256"] != entry.get("publish_sha256"):
-              raise SystemExit("TASK 2 HOLD — receipt transport SHA-256 mismatch")
-          if str(receipt["publish_commit"]).strip().lower() != media_commit:
-              raise SystemExit("TASK 2 HOLD — receipt immutable media commit mismatch")
-          if str(receipt["username"]).strip().lower() != expected_username:
-              raise SystemExit("TASK 2 HOLD — receipt account mismatch")
-
-          media_ids = [str(x.get("media_id") or "") for x in posted if isinstance(x, dict)]
-          permalinks = [str(x.get("permalink") or "") for x in posted if isinstance(x, dict)]
-          slots = [str(x.get("slot") or "") for x in posted if isinstance(x, dict)]
-          if len(media_ids) != len(set(media_ids)) or len(permalinks) != len(set(permalinks)) or len(slots) != len(set(slots)):
-              raise SystemExit("TASK 2 HOLD — duplicate receipt identity detected at release")
-
-          expected_next = (queue.index(receipt["filename"]) + 1) % len(queue)
-          if int(state.get("next_index", -1)) != expected_next:
-              raise SystemExit("TASK 2 HOLD — queue advancement mismatch at release")
-
-          r = requests.get(
-              f"{host}/{version}/{receipt['media_id']}",
-              params={"fields":"id,permalink,timestamp,media_type,username","access_token":token},
-              timeout=60,
-          )
-          if not r.ok:
-              raise SystemExit(f"TASK 2 HOLD — live receipt verification HTTP {r.status_code}")
-          live = r.json()
-          if str(live.get("id") or "") != str(receipt["media_id"]):
-              raise SystemExit("TASK 2 HOLD — live receipt media_id mismatch")
-          if str(live.get("username") or "").strip().lower() != expected_username:
-              raise SystemExit("TASK 2 HOLD — live receipt username mismatch")
-          if live.get("media_type") != "IMAGE":
-              raise SystemExit("TASK 2 HOLD — live receipt media_type mismatch")
-          if str(live.get("permalink") or "") != str(receipt["permalink"]):
-              raise SystemExit("TASK 2 HOLD — live receipt permalink mismatch")
-          if str(live.get("timestamp") or "") != str(receipt["timestamp"]):
-              raise SystemExit("TASK 2 HOLD — live receipt timestamp mismatch")
-
-          try:
-              receipt_time = datetime.fromisoformat(str(receipt["timestamp"]).replace("Z","+00:00"))
-          except Exception:
-              raise SystemExit("TASK 2 HOLD — receipt timestamp invalid")
-          if receipt_time.astimezone(ZoneInfo("America/Phoenix")).date() != now.date():
-              raise SystemExit("TASK 2 HOLD — receipt PHX date mismatch")
-
-          print("TASK 2 VERIFIED LIVE INSTAGRAM RECEIPT / RELEASE GATE PASS")
-          print(json.dumps(receipt, indent=2))
-          PY
-
-      - name: Commit verified Task 2 receipt state
-        run: |
-          if git diff --quiet -- state.json; then
-            exit 0
-          fi
-          git config user.name "gdxp-task2"
-          git config user.email "gdxp-task2@users.noreply.github.com"
-          git add state.json
-          git commit -m "Task 2 Instagram verified receipt state"
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-
-      - name: Task 2 PASS close
-        run: echo "TASK 2 PASS — VERIFIED INSTAGRAM PUBLICATION RECEIPT — CLOSE"
-; then
-            echo "::error::TASK 2 HOLD — immutable media commit is invalid."
-            exit 1
-          fi
-          echo "TASK2_MEDIA_COMMIT=$media_commit" >> "$GITHUB_ENV"
-          echo "TASK 2 IMMUTABLE MEDIA COMMIT PINNED"
-
-      - name: Validate public Instagram transport path
-        shell: bash
-        run: |
-          python - <<'PY'
-          import hashlib, json
-          from pathlib import Path
-          from urllib.parse import quote
           import requests
 
-          manifest = json.loads(Path("task2_asset_manifest.json").read_text(encoding="utf-8"))
-          queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
-          base = "https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/main/instagram_media"
-          for source_name in queue:
-              entry = manifest.get(source_name)
-              if not isinstance(entry, dict):
-                  raise SystemExit(f"TASK 2 HOLD — public-path manifest entry missing: {source_name}")
-              publish_asset = str(entry.get("publish_asset") or "")
-              expected_sha = str(entry.get("publish_sha256") or "").lower()
-              if not publish_asset or len(expected_sha) != 64:
-                  raise SystemExit(f"TASK 2 HOLD — public-path manifest incomplete: {source_name}")
-              url = f"{base}/{quote(publish_asset)}"
-              r = requests.get(url, timeout=60, allow_redirects=True)
-              if not r.ok:
-                  raise SystemExit(f"TASK 2 HOLD — public Instagram transport HTTP {r.status_code}: {publish_asset}")
-              ctype = (r.headers.get("content-type") or "").lower()
-              if "image/jpeg" not in ctype and "application/octet-stream" not in ctype:
-                  raise SystemExit(f"TASK 2 HOLD — public Instagram transport MIME mismatch: {publish_asset}")
-              if not r.content.startswith(b"\xff\xd8\xff"):
-                  raise SystemExit(f"TASK 2 HOLD — public Instagram transport JPEG signature mismatch: {publish_asset}")
-              actual_sha = hashlib.sha256(r.content).hexdigest()
-              if actual_sha != expected_sha:
-                  raise SystemExit(f"TASK 2 HOLD — public Instagram transport SHA-256 mismatch: {publish_asset}")
-          print("TASK 2 PUBLIC INSTAGRAM TRANSPORT PATH GATE PASS")
-          PY
-
-      - name: Publish next approved PNG source via verified Instagram JPEG transport
-        env:
-          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
-          IG_IMAGE_BASE_URL: https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/main/instagram_media
-          IG_API_VERSION: v24.0
-          IG_GRAPH_HOST: https://graph.instagram.com
-          IG_EXPECTED_USERNAME: jeffbrown3579
-          TASK2_SLOT: ${{ env.TASK2_SLOT }}
-        run: python task2_instagram_publisher.py
-
-      - name: Verify Instagram publication receipt and release gate
-        env:
-          TASK2_SLOT: ${{ env.TASK2_SLOT }}
-          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
-          IG_API_VERSION: v24.0
-          IG_GRAPH_HOST: https://graph.instagram.com
-          IG_EXPECTED_USERNAME: jeffbrown3579
-        shell: bash
-        run: |
-          python - <<'PY'
-          import json, os, requests
-          from datetime import datetime
-          from pathlib import Path
-          from zoneinfo import ZoneInfo
-
-          slot = os.environ["TASK2_SLOT"]
+          slot = os.environ["TASK2_SLOT"].strip()
+          media_commit = os.environ["TASK2_MEDIA_COMMIT"].strip().lower()
           token = os.environ["IG_ACCESS_TOKEN"].strip()
-          version = os.environ["IG_API_VERSION"]
+          version = os.environ["IG_API_VERSION"].strip()
           host = os.environ["IG_GRAPH_HOST"].rstrip("/")
-          expected_username = os.environ["IG_EXPECTED_USERNAME"].strip().lower()
+          expected_username = (
+              os.environ["IG_EXPECTED_USERNAME"].strip().lstrip("@").lower()
+          )
+
+          if slot not in {"09", "15"}:
+              raise SystemExit("TASK 2 HOLD — release lane invalid")
+          if len(media_commit) != 40 or any(
+              ch not in "0123456789abcdef" for ch in media_commit
+          ):
+              raise SystemExit(
+                  "TASK 2 HOLD — immutable media commit invalid at release gate"
+              )
           if not token:
-              raise SystemExit("TASK 2 HOLD — release-gate Instagram authorization unavailable")
+              raise SystemExit(
+                  "TASK 2 HOLD — release-gate Instagram authorization unavailable"
+              )
 
           now = datetime.now(ZoneInfo("America/Phoenix"))
           slot_id = f"{now.date().isoformat()}-{slot}"
+
           state = json.loads(Path("state.json").read_text(encoding="utf-8"))
           queue = json.loads(Path("queue.json").read_text(encoding="utf-8"))
-          manifest = json.loads(Path("task2_asset_manifest.json").read_text(encoding="utf-8"))
-          approved = json.loads(Path("approved_source_assets.json").read_text(encoding="utf-8"))
+          manifest = json.loads(
+              Path("task2_asset_manifest.json").read_text(encoding="utf-8")
+          )
+          approved = json.loads(
+              Path("approved_source_assets.json").read_text(encoding="utf-8")
+          )
 
           if state.get("last_slot") != slot_id:
-              raise SystemExit("TASK 2 HOLD — state last_slot does not match release lane")
+              raise SystemExit(
+                  "TASK 2 HOLD — state last_slot does not match release lane"
+              )
+
           posted = state.get("posted", [])
           if not isinstance(posted, list):
               raise SystemExit("TASK 2 HOLD — release state posted field invalid")
-          matches = [x for x in posted if isinstance(x, dict) and x.get("slot") == slot_id]
+
+          matches = [
+              item
+              for item in posted
+              if isinstance(item, dict) and item.get("slot") == slot_id
+          ]
           if len(matches) != 1:
-              raise SystemExit("TASK 2 HOLD — release lane must have exactly one verified receipt")
+              raise SystemExit(
+                  "TASK 2 HOLD — release lane must have exactly one verified receipt"
+              )
 
           receipt = matches[0]
-          required = ("slot","filename","publish_asset","publish_sha256","media_id","permalink","timestamp","username")
-          missing = [k for k in required if not str(receipt.get(k, "")).strip()]
+          required = (
+              "slot",
+              "filename",
+              "publish_asset",
+              "publish_sha256",
+              "publish_commit",
+              "media_id",
+              "permalink",
+              "timestamp",
+              "username",
+          )
+          missing = [
+              key for key in required if not str(receipt.get(key, "")).strip()
+          ]
           if missing:
-              raise SystemExit("TASK 2 HOLD — incomplete Instagram receipt: " + ", ".join(missing))
+              raise SystemExit(
+                  "TASK 2 HOLD — incomplete Instagram receipt: " + ", ".join(missing)
+              )
+
           if receipt["filename"] not in queue:
-              raise SystemExit("TASK 2 HOLD — receipt source asset not in approved queue")
+              raise SystemExit(
+                  "TASK 2 HOLD — receipt source asset not in approved queue"
+              )
 
           entry = manifest.get(receipt["filename"])
           approved_entry = approved.get(receipt["filename"])
           if not isinstance(entry, dict) or not isinstance(approved_entry, dict):
-              raise SystemExit("TASK 2 HOLD — receipt asset absent from approved artifact controls")
+              raise SystemExit(
+                  "TASK 2 HOLD — receipt asset absent from approved artifact controls"
+              )
           if entry.get("source_sha256") != approved_entry.get("source_sha256"):
-              raise SystemExit("TASK 2 HOLD — approved source SHA-256 mismatch at release")
+              raise SystemExit(
+                  "TASK 2 HOLD — approved source SHA-256 mismatch at release"
+              )
           if receipt["publish_asset"] != entry.get("publish_asset"):
-              raise SystemExit("TASK 2 HOLD — receipt transport artifact mismatch")
+              raise SystemExit(
+                  "TASK 2 HOLD — receipt transport artifact mismatch"
+              )
           if receipt["publish_sha256"] != entry.get("publish_sha256"):
-              raise SystemExit("TASK 2 HOLD — receipt transport SHA-256 mismatch")
+              raise SystemExit(
+                  "TASK 2 HOLD — receipt transport SHA-256 mismatch"
+              )
+          if str(receipt["publish_commit"]).strip().lower() != media_commit:
+              raise SystemExit(
+                  "TASK 2 HOLD — receipt immutable media commit mismatch"
+              )
           if str(receipt["username"]).strip().lower() != expected_username:
               raise SystemExit("TASK 2 HOLD — receipt account mismatch")
 
-          media_ids = [str(x.get("media_id") or "") for x in posted if isinstance(x, dict)]
-          permalinks = [str(x.get("permalink") or "") for x in posted if isinstance(x, dict)]
-          slots = [str(x.get("slot") or "") for x in posted if isinstance(x, dict)]
-          if len(media_ids) != len(set(media_ids)) or len(permalinks) != len(set(permalinks)) or len(slots) != len(set(slots)):
-              raise SystemExit("TASK 2 HOLD — duplicate receipt identity detected at release")
+          media_ids = [
+              str(item.get("media_id") or "")
+              for item in posted
+              if isinstance(item, dict)
+          ]
+          permalinks = [
+              str(item.get("permalink") or "")
+              for item in posted
+              if isinstance(item, dict)
+          ]
+          slots = [
+              str(item.get("slot") or "")
+              for item in posted
+              if isinstance(item, dict)
+          ]
+          if (
+              len(media_ids) != len(set(media_ids))
+              or len(permalinks) != len(set(permalinks))
+              or len(slots) != len(set(slots))
+          ):
+              raise SystemExit(
+                  "TASK 2 HOLD — duplicate receipt identity detected at release"
+              )
 
           expected_next = (queue.index(receipt["filename"]) + 1) % len(queue)
           if int(state.get("next_index", -1)) != expected_next:
-              raise SystemExit("TASK 2 HOLD — queue advancement mismatch at release")
+              raise SystemExit(
+                  "TASK 2 HOLD — queue advancement mismatch at release"
+              )
 
-          r = requests.get(
+          response = requests.get(
               f"{host}/{version}/{receipt['media_id']}",
-              params={"fields":"id,permalink,timestamp,media_type,username","access_token":token},
+              params={
+                  "fields": "id,permalink,timestamp,media_type,username",
+                  "access_token": token,
+              },
               timeout=60,
           )
-          if not r.ok:
-              raise SystemExit(f"TASK 2 HOLD — live receipt verification HTTP {r.status_code}")
-          live = r.json()
+          if not response.ok:
+              raise SystemExit(
+                  f"TASK 2 HOLD — live receipt verification HTTP {response.status_code}"
+              )
+
+          live = response.json()
           if str(live.get("id") or "") != str(receipt["media_id"]):
               raise SystemExit("TASK 2 HOLD — live receipt media_id mismatch")
-          if str(live.get("username") or "").strip().lower() != expected_username:
+          if (
+              str(live.get("username") or "").strip().lower()
+              != expected_username
+          ):
               raise SystemExit("TASK 2 HOLD — live receipt username mismatch")
           if live.get("media_type") != "IMAGE":
               raise SystemExit("TASK 2 HOLD — live receipt media_type mismatch")
@@ -560,10 +608,15 @@ jobs:
               raise SystemExit("TASK 2 HOLD — live receipt timestamp mismatch")
 
           try:
-              receipt_time = datetime.fromisoformat(str(receipt["timestamp"]).replace("Z","+00:00"))
+              receipt_time = datetime.fromisoformat(
+                  str(receipt["timestamp"]).replace("Z", "+00:00")
+              )
           except Exception:
               raise SystemExit("TASK 2 HOLD — receipt timestamp invalid")
-          if receipt_time.astimezone(ZoneInfo("America/Phoenix")).date() != now.date():
+
+          if receipt_time.astimezone(
+              ZoneInfo("America/Phoenix")
+          ).date() != now.date():
               raise SystemExit("TASK 2 HOLD — receipt PHX date mismatch")
 
           print("TASK 2 VERIFIED LIVE INSTAGRAM RECEIPT / RELEASE GATE PASS")
@@ -571,7 +624,9 @@ jobs:
           PY
 
       - name: Commit verified Task 2 receipt state
+        shell: bash
         run: |
+          set -euo pipefail
           if git diff --quiet -- state.json; then
             exit 0
           fi
@@ -579,8 +634,8 @@ jobs:
           git config user.email "gdxp-task2@users.noreply.github.com"
           git add state.json
           git commit -m "Task 2 Instagram verified receipt state"
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
 
       - name: Task 2 PASS close
         run: echo "TASK 2 PASS — VERIFIED INSTAGRAM PUBLICATION RECEIPT — CLOSE"
