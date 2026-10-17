@@ -71,8 +71,10 @@ jobs:
               raise SystemExit("TASK 2 HOLD — route contract mismatch")
           if contract.get("graph_host") != "https://graph.instagram.com":
               raise SystemExit("TASK 2 HOLD — graph host contract mismatch")
-          if contract.get("api_version") != "v24.0":
+          if contract.get("api_version") != "v26.0":
               raise SystemExit("TASK 2 HOLD — API version contract mismatch")
+          if contract.get("ai_generated_disclosure") is not True:
+              raise SystemExit("TASK 2 HOLD — AI-generated disclosure contract mismatch")
           if contract.get("target_username") != "jeffbrown3579":
               raise SystemExit("TASK 2 HOLD — target username contract mismatch")
           if contract.get("required_scopes") != [
@@ -93,7 +95,7 @@ jobs:
       - name: Instagram authorization target and publishing-scope gate
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
-          IG_API_VERSION: v24.0
+          IG_API_VERSION: v26.0
           IG_GRAPH_HOST: https://graph.instagram.com
           IG_EXPECTED_USERNAME: jeffbrown3579
         shell: bash
@@ -483,7 +485,7 @@ jobs:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           IG_IMAGE_BASE_URL: https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/${{ env.TASK2_MEDIA_COMMIT }}/instagram_media
           TASK2_MEDIA_COMMIT: ${{ env.TASK2_MEDIA_COMMIT }}
-          IG_API_VERSION: v24.0
+          IG_API_VERSION: v26.0
           IG_GRAPH_HOST: https://graph.instagram.com
           IG_EXPECTED_USERNAME: jeffbrown3579
           TASK2_SLOT: ${{ env.TASK2_SLOT }}
@@ -494,7 +496,7 @@ jobs:
           TASK2_SLOT: ${{ env.TASK2_SLOT }}
           TASK2_MEDIA_COMMIT: ${{ env.TASK2_MEDIA_COMMIT }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
-          IG_API_VERSION: v24.0
+          IG_API_VERSION: v26.0
           IG_GRAPH_HOST: https://graph.instagram.com
           IG_EXPECTED_USERNAME: jeffbrown3579
         shell: bash
@@ -587,6 +589,7 @@ jobs:
               "permalink",
               "timestamp",
               "username",
+              "is_ai_generated",
           )
           missing = [
               key for key in required if not str(receipt.get(key, "")).strip()
@@ -728,7 +731,7 @@ jobs:
           response = requests.get(
               f"{host}/{version}/{receipt['media_id']}",
               params={
-                  "fields": "id,permalink,timestamp,media_type,username",
+                  "fields": "id,permalink,timestamp,media_type,username,is_ai_generated",
                   "access_token": token,
               },
               timeout=60,
@@ -748,6 +751,10 @@ jobs:
               raise SystemExit("TASK 2 HOLD — live receipt username mismatch")
           if live.get("media_type") != "IMAGE":
               raise SystemExit("TASK 2 HOLD — live receipt media_type mismatch")
+          if live.get("is_ai_generated") is not True:
+              raise SystemExit("TASK 2 HOLD — live receipt AI-generated disclosure mismatch")
+          if receipt.get("is_ai_generated") is not True:
+              raise SystemExit("TASK 2 HOLD — stored receipt AI-generated disclosure mismatch")
           if str(live.get("permalink") or "") != str(receipt["permalink"]):
               raise SystemExit("TASK 2 HOLD — live receipt permalink mismatch")
           if str(live.get("timestamp") or "") != str(receipt["timestamp"]):
