@@ -114,6 +114,21 @@ def resolve_slot():
 
 resolve_account()
 
+limit_payload = api_get(f"{IG_USER_ID}/content_publishing_limit", {
+    "fields": "quota_usage,config",
+    "access_token": ACCESS_TOKEN,
+})
+limit_rows = limit_payload.get("data") if isinstance(limit_payload, dict) else None
+if not isinstance(limit_rows, list) or len(limit_rows) != 1:
+    fail(f"unexpected content publishing limit response: {limit_payload}")
+limit_row = limit_rows[0]
+quota_usage = int(limit_row.get("quota_usage", 0))
+quota_config = limit_row.get("config") or {}
+quota_total = quota_config.get("quota_total")
+if quota_total is not None and quota_usage >= int(quota_total):
+    fail(f"Instagram publishing quota exhausted: {quota_usage}/{quota_total}")
+print(f"TASK 2 PUBLISHING QUOTA VERIFIED: {quota_usage}/{quota_total if quota_total is not None else 'runtime limit unavailable'}")
+
 now = datetime.now(PHX)
 slot = resolve_slot()
 slot_id = f"{now.date().isoformat()}-{slot}"
@@ -192,6 +207,12 @@ if receipt.get("username") and str(receipt.get("username")).lower() != EXPECTED_
     fail(f"receipt username mismatch: {receipt}")
 if not receipt.get("permalink") or not receipt.get("timestamp"):
     fail(f"receipt missing permalink or timestamp: {receipt}")
+try:
+    receipt_time = datetime.fromisoformat(str(receipt["timestamp"]).replace("Z", "+00:00"))
+except Exception:
+    fail(f"receipt timestamp is not valid ISO-8601: {receipt}")
+if receipt_time.astimezone(PHX).date() != now.date():
+    fail(f"receipt PHX date mismatch: {receipt}")
 
 state["last_slot"] = slot_id
 state["next_index"] = (index + 1) % len(queue)
