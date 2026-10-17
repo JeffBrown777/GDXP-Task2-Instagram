@@ -509,14 +509,26 @@ jobs:
               Path("approved_source_assets.json").read_text(encoding="utf-8")
           )
 
-          if state.get("last_slot") != slot_id:
-              raise SystemExit(
-                  "TASK 2 HOLD — state last_slot does not match release lane"
-              )
-
           posted = state.get("posted", [])
-          if not isinstance(posted, list):
-              raise SystemExit("TASK 2 HOLD — release state posted field invalid")
+          if not isinstance(posted, list) or not posted:
+              raise SystemExit("TASK 2 HOLD — release state posted history invalid")
+
+          if not isinstance(posted[-1], dict):
+              raise SystemExit("TASK 2 HOLD — most recent posted receipt invalid")
+          if state.get("last_slot") != posted[-1].get("slot"):
+              raise SystemExit(
+                  "TASK 2 HOLD — state last_slot does not match most recent receipt"
+              )
+          last_filename = posted[-1].get("filename")
+          if last_filename not in queue:
+              raise SystemExit(
+                  "TASK 2 HOLD — most recent receipt source is not in approved queue"
+              )
+          expected_next_after_last = (queue.index(last_filename) + 1) % len(queue)
+          if int(state.get("next_index", -1)) != expected_next_after_last:
+              raise SystemExit(
+                  "TASK 2 HOLD — state next_index does not follow most recent receipt"
+              )
 
           matches = [
               item
@@ -663,12 +675,6 @@ jobs:
           ):
               raise SystemExit(
                   "TASK 2 HOLD — duplicate receipt identity detected at release"
-              )
-
-          expected_next = (queue.index(receipt["filename"]) + 1) % len(queue)
-          if int(state.get("next_index", -1)) != expected_next:
-              raise SystemExit(
-                  "TASK 2 HOLD — queue advancement mismatch at release"
               )
 
           response = requests.get(
