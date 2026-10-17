@@ -120,8 +120,7 @@ def resolve_slot():
     explicit = os.getenv("TASK2_SLOT", "").strip()
     if explicit in {"09", "15"}:
         return explicit
-    now = datetime.now(PHX)
-    return "09" if now.hour < 12 else "15"
+    fail("TASK2_SLOT must be explicitly set to 09 or 15; refusing to guess the lane")
 
 resolve_account()
 
@@ -153,16 +152,36 @@ if len(set(queue)) != len(queue):
 state = load_json(STATE_PATH, {"last_slot": None, "next_index": 0, "posted": []})
 if state.get("last_slot") == slot_id:
     matches = [x for x in state.get("posted", []) if x.get("slot") == slot_id]
-    if not matches:
-        fail(f"state claims slot {slot_id} posted but no receipt exists")
-    receipt = matches[-1]
+    if len(matches) != 1:
+        fail(f"state claims slot {slot_id} posted but does not contain exactly one receipt")
+    receipt = matches[0]
     required = ("filename", "publish_asset", "publish_sha256", "media_id", "permalink", "timestamp", "username")
     missing = [k for k in required if not str(receipt.get(k, "")).strip()]
     if missing:
         fail("stored receipt is incomplete: " + ", ".join(missing))
-    if str(receipt.get("username", "")).lower() != EXPECTED_USERNAME:
+    if str(receipt.get("username", "")).strip().lower() != EXPECTED_USERNAME:
         fail(f"stored receipt username mismatch: {receipt.get('username')}")
-    print(f"TASK 2 PASS: slot {slot_id} already has a verified Instagram receipt; duplicate suppressed.")
+    live = api_get(str(receipt["media_id"]), {
+        "fields": "id,permalink,timestamp,media_type,username",
+        "access_token": ACCESS_TOKEN,
+    })
+    if str(live.get("id") or "") != str(receipt["media_id"]):
+        fail(f"stored receipt media_id no longer verifies: {live}")
+    if str(live.get("username") or "").strip().lower() != EXPECTED_USERNAME:
+        fail(f"stored receipt live username mismatch: {live}")
+    if live.get("media_type") != "IMAGE":
+        fail(f"stored receipt live media_type mismatch: {live}")
+    if str(live.get("permalink") or "") != str(receipt["permalink"]):
+        fail(f"stored receipt permalink mismatch: {live}")
+    if str(live.get("timestamp") or "") != str(receipt["timestamp"]):
+        fail(f"stored receipt timestamp mismatch: {live}")
+    try:
+        live_time = datetime.fromisoformat(str(live["timestamp"]).replace("Z", "+00:00"))
+    except Exception:
+        fail(f"stored receipt live timestamp is not valid ISO-8601: {live}")
+    if live_time.astimezone(PHX).date() != now.date():
+        fail(f"stored receipt live PHX date mismatch: {live}")
+    print(f"TASK 2 PASS: slot {slot_id} has a live reverified Instagram receipt; duplicate suppressed.")
     print(json.dumps(receipt, indent=2))
     raise SystemExit(0)
 
@@ -223,7 +242,9 @@ if receipt.get("id") != media_id:
     fail(f"receipt media id mismatch: {receipt}")
 if receipt.get("media_type") != "IMAGE":
     fail(f"receipt media_type is not IMAGE: {receipt}")
-if receipt.get("username") and str(receipt.get("username")).lower() != EXPECTED_USERNAME:
+if not str(receipt.get("username") or "").strip():
+    fail(f"receipt missing username: {receipt}")
+if str(receipt.get("username")).strip().lower() != EXPECTED_USERNAME:
     fail(f"receipt username mismatch: {receipt}")
 if not receipt.get("permalink") or not receipt.get("timestamp"):
     fail(f"receipt missing permalink or timestamp: {receipt}")
@@ -244,7 +265,7 @@ state.setdefault("posted", []).append({
     "media_id": media_id,
     "permalink": receipt.get("permalink"),
     "timestamp": receipt.get("timestamp"),
-    "username": receipt.get("username") or EXPECTED_USERNAME,
+    "username": receipt.get("username"),
 })
 Path(STATE_PATH).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 print("TASK 2 PASS")
