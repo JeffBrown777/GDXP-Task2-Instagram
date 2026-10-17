@@ -75,6 +75,11 @@ jobs:
               raise SystemExit("TASK 2 HOLD — API version contract mismatch")
           if contract.get("target_username") != "jeffbrown3579":
               raise SystemExit("TASK 2 HOLD — target username contract mismatch")
+          if contract.get("required_scopes") != [
+              "instagram_business_basic",
+              "instagram_business_content_publish",
+          ]:
+              raise SystemExit("TASK 2 HOLD — Instagram publishing-scope contract mismatch")
           if contract.get("timezone") != "America/Phoenix":
               raise SystemExit("TASK 2 HOLD — timezone contract mismatch")
           if contract.get("slots") != {"09": "0 16 * * *", "15": "0 22 * * *"}:
@@ -175,23 +180,32 @@ jobs:
               raise SystemExit(
                   "TASK 2 HOLD — Instagram publishing quota usage is negative"
               )
-          config = row.get("config") or {}
+          config = row.get("config")
+          if not isinstance(config, dict):
+              raise SystemExit(
+                  "TASK 2 HOLD — Instagram publishing quota config is missing"
+              )
           total = config.get("quota_total")
-          if total is not None:
-              try:
-                  total = int(total)
-              except Exception:
-                  raise SystemExit(
-                      "TASK 2 HOLD — Instagram publishing quota total is invalid"
-                  )
-              if total <= 0:
-                  raise SystemExit(
-                      "TASK 2 HOLD — Instagram publishing quota total is non-positive"
-                  )
-              if usage >= total:
-                  raise SystemExit(
-                      f"TASK 2 HOLD — Instagram publishing quota exhausted: {usage}/{total}"
-                  )
+          duration = config.get("quota_duration")
+          if total is None or duration is None:
+              raise SystemExit(
+                  "TASK 2 HOLD — Instagram publishing quota config is incomplete"
+              )
+          try:
+              total = int(total)
+              duration = int(duration)
+          except Exception:
+              raise SystemExit(
+                  "TASK 2 HOLD — Instagram publishing quota config values are invalid"
+              )
+          if total <= 0 or duration <= 0:
+              raise SystemExit(
+                  "TASK 2 HOLD — Instagram publishing quota config values must be positive"
+              )
+          if usage >= total:
+              raise SystemExit(
+                  f"TASK 2 HOLD — Instagram publishing quota exhausted: {usage}/{total}"
+              )
 
           print("TASK 2 INSTAGRAM AUTHORIZED TARGET / PUBLISHING-SCOPE GATE PASS")
           PY
@@ -387,7 +401,6 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib
           import hashlib
           import json
           import os
