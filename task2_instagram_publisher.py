@@ -278,8 +278,15 @@ if state.get("last_slot") == slot_id:
         fail("stored receipt transport asset mismatch")
     if receipt["publish_sha256"] != duplicate_entry.get("publish_sha256"):
         fail("stored receipt transport SHA-256 mismatch")
-    if str(receipt["publish_commit"]).lower() != MEDIA_COMMIT:
-        fail("stored receipt immutable media commit mismatch")
+    stored_commit = str(receipt["publish_commit"]).strip().lower()
+    if len(stored_commit) != 40 or any(ch not in "0123456789abcdef" for ch in stored_commit):
+        fail("stored receipt immutable media commit invalid")
+    stored_image_url = (
+        "https://raw.githubusercontent.com/"
+        f"JeffBrown777/GDXP-Task2-Instagram/{stored_commit}/instagram_media/"
+        f"{requests.utils.quote(receipt['publish_asset'])}"
+    )
+    verify_public_jpeg(stored_image_url, str(receipt["publish_sha256"]))
     expected_next = (queue.index(receipt["filename"]) + 1) % len(queue)
     if next_index_raw != expected_next:
         fail("stored receipt queue advancement mismatch")
