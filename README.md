@@ -1,58 +1,130 @@
-GDXP TASK 2 - FREE INSTAGRAM AUTOMATION - DIRECT INSTAGRAM LOGIN CORRECTION
+# GDXP TASK 2 — INSTAGRAM
 
-PURPOSE
-- No paid social-media scheduler.
-- One approved PNG source at 9:00 AM PHX.
-- One approved PNG source at 3:00 PM PHX.
-- No invented caption.
-- Duplicate suppression by exact PHX lane.
-- Instagram media ID/permalink/timestamp receipt recorded only after verified publication.
+## PURPOSE
 
-FREE ROUTE
-Instagram API with Instagram Login + GitHub Actions.
+Task 2 publishes one approved image in each contracted Phoenix lane:
 
-TARGET
-Instagram: jeffbrown3579
+- 09:00 PHX
+- 15:00 PHX
 
-REPOSITORY
-JeffBrown777/GDXP-Task2-Instagram
+Target Instagram account: `jeffbrown3579`
 
-CORRECTED AUTHORIZATION PATH
-1. Target account must be an Instagram Professional account (Business or Creator).
-2. Use Instagram Login, not the Facebook-Page traversal path.
-3. Required Instagram permission scopes:
-   instagram_business_basic
-   instagram_business_content_publish
-4. The Instagram access token is stored only as the GitHub Actions secret IG_ACCESS_TOKEN.
-5. The publisher resolves the authenticated Instagram account ID at runtime and verifies the authenticated username is exactly jeffbrown3579 before any publish action.
-6. Wrong account, missing token, duplicate lane, unverified source asset, API error, or missing receipt = HOLD.
-7. Publication PASS requires media ID + permalink + timestamp + IMAGE receipt.
+Route: Instagram API with Instagram Login + GitHub Actions.
 
-SOURCE-ASSET / API-TRANSPORT CORRECTION
-- JB's approved source remains the original PNG and is never overwritten.
-- Instagram content publishing requires a JPEG image transport asset.
-- bootstrap_assets.py creates a deterministic high-quality JPEG transport copy in instagram_media/ from the approved PNG.
-- No text, caption, hashtags, or creative content are added.
-- queue.json continues to identify the approved PNG source asset.
-- state.json records the approved PNG source filename and the JPEG transport filename after a verified post.
+No caption, hashtags, or other creative text are added.
 
-REPOSITORY SECRET
-IG_ACCESS_TOKEN
+## CONTROLLING EXECUTION CONTRACT
 
-NO LONGER REQUIRED
-IG_USER_ID is not required as a GitHub secret; the authenticated account ID is resolved from Instagram at runtime.
+`task2_contract.json` locks:
 
-NON-SECRET EXECUTION VALUES
-IG_IMAGE_BASE_URL
-  https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/main/instagram_media
-IG_API_VERSION
-  v24.0
-IG_GRAPH_HOST
-  https://graph.instagram.com
-IG_EXPECTED_USERNAME
-  jeffbrown3579
+- route: `instagram_login`
+- Graph host: `https://graph.instagram.com`
+- API version: `v24.0`
+- target username: `jeffbrown3579`
+- timezone: `America/Phoenix`
+- exact 09/15 PHX schedules
+- exact approved queue order
 
-GDXP TASK 2
-9:00 AM PHX -> one approved PNG source, published through the required JPEG API transport
-3:00 PM PHX -> one approved PNG source, published through the required JPEG API transport
-NO VERIFIED PUBLICATION RECEIPT = NO SUCCESS CLAIM.
+Any contract mismatch fails closed before publication.
+
+## AUTHORIZATION
+
+GitHub Actions secret:
+
+`IG_ACCESS_TOKEN`
+
+The workflow requires the token before lane, artifact, or publication work.
+
+The authenticated Instagram profile must resolve to:
+
+- username exactly `jeffbrown3579`
+- a numeric Instagram user ID
+- account type `BUSINESS` or `MEDIA_CREATOR`
+
+The runtime publishing quota endpoint must also pass before publication.
+
+## APPROVED ASSETS
+
+Source identity is controlled by `approved_source_assets.json`.
+
+`bootstrap_assets.py`:
+
+1. Reconstructs each approved PNG from the repository's encoded source chunks.
+2. Verifies reconstructed bytes against the pinned source SHA-256.
+3. Auto-replaces a missing or corrupted local PNG only with the verified source bytes.
+4. Generates the JPEG API transport derivative with pinned Python dependencies.
+5. Verifies the generated JPEG before release.
+
+The approved PNG is the source artifact. The JPEG is transport only.
+
+## IMMUTABLE PUBLIC MEDIA
+
+The workflow validates source and transport artifacts, commits any materialized changes, then freezes the exact 40-character Git commit SHA.
+
+Instagram receives media only from:
+
+`https://raw.githubusercontent.com/JeffBrown777/GDXP-Task2-Instagram/<IMMUTABLE_COMMIT>/instagram_media/<ASSET>.jpg`
+
+The public JPEG signature and SHA-256 must match the validated transport artifact before publication.
+
+The receipt stores the immutable publication commit.
+
+## PUBLICATION
+
+The publisher:
+
+1. Re-verifies the authenticated target.
+2. Re-verifies publishing quota.
+3. Validates the complete state history.
+4. Suppresses a lane already represented by one live-verified Instagram receipt.
+5. Creates the Instagram media container.
+6. Polls container state once per minute, for no more than five checks.
+7. Publishes only a `FINISHED` container.
+8. Retrieves the published Instagram media receipt.
+9. Requires numeric `media_id`, `IMAGE`, HTTPS Instagram permalink, timezone-qualified timestamp, and username `jeffbrown3579`.
+10. Atomically writes verified state.
+
+## RECEIPT / RELEASE
+
+A Task 2 receipt contains:
+
+- slot
+- approved source filename
+- approved source SHA-256
+- JPEG transport filename
+- JPEG transport SHA-256
+- immutable publication commit
+- Instagram `media_id`
+- Instagram permalink
+- Instagram timestamp
+- Instagram username
+
+The final workflow gate independently re-verifies:
+
+- state integrity
+- queue progression from the most recent receipt
+- exact current lane receipt
+- approved source identity
+- historical immutable source bytes
+- historical immutable transport bytes
+- unique slot, media ID, and permalink
+- live Instagram media ID
+- live Instagram username
+- live media type
+- live permalink
+- live timestamp
+- Phoenix publication date
+
+Only then may the workflow reach:
+
+`TASK 2 PASS — VERIFIED INSTAGRAM PUBLICATION RECEIPT — CLOSE`
+
+## GMAIL
+
+Gmail is corroboration only. A GitHub notification, digest, or self-authored email is not an Instagram publication receipt and cannot create PASS/CLOSE.
+
+## RELEASE RULE
+
+GitHub success alone is not Task 2 success.
+
+No verified Instagram publication receipt = no Task 2 PASS/CLOSE.
