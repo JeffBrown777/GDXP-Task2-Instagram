@@ -16,22 +16,20 @@ for item in manifest:
 
     publish_name=Path(item["filename"]).with_suffix(".jpg").name
     publish_path=ig_dir/publish_name
-    rebuild=(not publish_path.exists()) or publish_path.stat().st_mtime < source.stat().st_mtime
-    if rebuild:
-        with Image.open(source) as im:
-            im=ImageOps.exif_transpose(im)
-            if im.mode in ("RGBA","LA") or (im.mode=="P" and "transparency" in im.info):
-                rgba=im.convert("RGBA")
-                bg=Image.new("RGBA", rgba.size, (255,255,255,255))
-                bg.alpha_composite(rgba)
-                rgb=bg.convert("RGB")
-            else:
-                rgb=im.convert("RGB")
-            if rgb.width > 1440:
-                new_height = round(rgb.height * 1440 / rgb.width)
-                rgb = rgb.resize((1440, new_height), Image.Resampling.LANCZOS)
-            ratio = rgb.width / rgb.height
-            if ratio < 0.8 or ratio > 1.91:
-                raise SystemExit(f"Instagram transport aspect ratio out of range for {source}")
-            rgb.save(publish_path, format="JPEG", quality=95, subsampling=0, optimize=True)
-        print(f"created Instagram JPEG transport asset {publish_path} from approved source {source}")
+    with Image.open(source) as im:
+        im=ImageOps.exif_transpose(im)
+        if im.mode in ("RGBA","LA") or (im.mode=="P" and "transparency" in im.info):
+            rgba=im.convert("RGBA")
+            bg=Image.new("RGBA", rgba.size, (255,255,255,255))
+            bg.alpha_composite(rgba)
+            rgb=bg.convert("RGB")
+        else:
+            rgb=im.convert("RGB")
+        if rgb.width > 1440:
+            new_height = round(rgb.height * 1440 / rgb.width)
+            rgb = rgb.resize((1440, new_height), Image.Resampling.LANCZOS)
+        ratio = rgb.width / rgb.height
+        if ratio < 0.8 or ratio > 1.91:
+            raise SystemExit(f"Instagram transport aspect ratio out of range for {source}")
+        rgb.save(publish_path, format="JPEG", quality=95, subsampling=0, optimize=True)
+    print(f"created Instagram JPEG transport asset {publish_path} from approved source {source}")
