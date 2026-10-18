@@ -491,21 +491,6 @@ jobs:
           TASK2_SLOT: ${{ env.TASK2_SLOT }}
         run: python task2_instagram_publisher.py
 
-      - name: Persist verified Instagram publication receipt before final release
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- state.json; then
-            exit 0
-          fi
-          git config user.name "gdxp-task2"
-          git config user.email "gdxp-task2@users.noreply.github.com"
-          git add state.json
-          git commit -m "Task 2 Instagram verified receipt state"
-          git pull --rebase origin "$GITHUB_REF_NAME"
-          git push origin "HEAD:$GITHUB_REF_NAME"
-
-
       - name: Verify Instagram publication receipt and release gate
         env:
           TASK2_SLOT: ${{ env.TASK2_SLOT }}
@@ -795,6 +780,22 @@ jobs:
           print("TASK 2 VERIFIED LIVE INSTAGRAM RECEIPT / RELEASE GATE PASS")
           print(json.dumps(receipt, indent=2))
           PY
+
+
+      - name: Commit verified Task 2 receipt state
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- state.json; then
+            exit 0
+          fi
+          git config user.name "gdxp-task2"
+          git config user.email "gdxp-task2@users.noreply.github.com"
+          git add state.json
+          git commit -m "Task 2 Instagram verified receipt state"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
+
 
       - name: Task 2 PASS close
         run: echo "TASK 2 PASS — VERIFIED INSTAGRAM PUBLICATION RECEIPT — CLOSE"
